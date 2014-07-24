@@ -1,0 +1,48 @@
+This is a light-weight, user-space implementation of RFC 793 (TCP), without any
+reliance on an IP layer.  It can be used to provide multiple in-order, reliable
+streams on top of any datagram layer.
+
+UTCP does not rely on a specific event system. Instead, the application feeds
+it with incoming packets using utcp_recv(), and outgoing data for the streams
+using utcp_send(). Most of the rest is handled by callbacks. The application
+must however call utcp_timeout() regularly to have UTCP handle packet loss.
+
+The application should run utcp_init() for every peer it wants to communicate
+with.
+
+DIFFERENCES FROM RFC 793:
+
+* No checksum. UTCP requires the application to handle packet integrity.
+* 32-bit window size. Big window sizes are the default.
+* No ECN, PSH, URG
+* Ports are a bit strange (for now).
+
+TODO v1.0:
+
+* Do ports the same way as real TCP?
+* Implement send buffer
+* Window scaling
+* Handle retransmission
+* Do proper modulo 2^32 comparisons of sequence numbers
+
+TODO v2.0:
+
+* Nagle
+* NAK and SACK
+* Congestion window scaling
+* Timestamps?
+
+Future ideas:
+
+Fast open:
+	SYN + data?
+
+Receive-only open:
+	SYN|FIN
+
+Fast transaction:
+	SYN|FIN + request data ->
+	<- SYN|ACK|FIN + response data
+	ACK ->
+
+Does this need special care or can we rely on higher level MACs?
