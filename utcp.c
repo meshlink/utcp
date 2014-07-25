@@ -109,6 +109,9 @@ struct utcp_connection {
 
 	struct timeval conn_timeout;
 	struct timeval rtrx_timeout;
+
+	char *sndbuf;
+	uint32_t sndbufsize;
 };
 
 struct utcp {
@@ -160,96 +163,127 @@ static void print_packet(void *pkt, size_t len) {
 	fprintf(stderr, "\n");
 }
 
-static struct utcp_connection *allocate_connection(struct utcp *utcp) {
-	struct utcp_connection *c;
+static void list_connections(struct utcp *utcp) {
+	fprintf(stderr, "%p has %d connections:\n", utcp, utcp->nconnections);
+	for(int i = 0; i < utcp->nconnections; i++)
+		fprintf(stderr, "  %u -> %u state %s\n", utcp->connections[i]->src, utcp->connections[i]->dst, strstate[utcp->connections[i]->state]);
+}
 
-	// Initial allocation?
+// Connections are stored in a sorted list.
+// This gives O(log(N)) lookup time, O(N log(N)) insertion time and O(N) deletion time.
 
-	if(!utcp->nconnections) {
-		utcp->nallocated = 4;
-		utcp->nconnections = 1; // Skip 0
-		utcp->connections = calloc(utcp->nallocated, sizeof *utcp->connections);
-	}
+static int compare(const void *va, const void *vb) {
+	const struct utcp_connection *a = *(struct utcp_connection **)va;
+	const struct utcp_connection *b = *(struct utcp_connection **)vb;
+	if(!a->src || !b->src)
+		abort();
+	int c = (int)a->src - (int)b->src;
+	if(c)
+		return c;
+	c = (int)a->dst - (int)b->dst;
+	return c;
+}
 
-	// If there is a hole in the list of connections, use it.
-	// Otherwise, add a new connection to the end.
+static struct utcp_connection *find_connection(const struct utcp *utcp, uint16_t src, uint16_t dst) {
+	if(!utcp->nconnections)
+		return NULL;
+	struct utcp_connection key = {
+		.src = src,
+		.dst = dst,
+	}, *keyp = &key;
+	struct utcp_connection **match = bsearch(&keyp, utcp->connections, utcp->nconnections, sizeof *utcp->connections, compare);
+	return match ? *match : NULL;
+}
 
-	if(utcp->gap >= 0) {
-		c = utcp->connections[utcp->gap] = calloc(1, sizeof *c);
-		c->src = utcp->gap;
-		while(++utcp->gap < utcp->nconnections)
-			if(!utcp->connections[utcp->gap])
-				break;
+static void free_connection(struct utcp_connection *c) {
+	struct utcp *utcp = c->utcp;
+	struct utcp_connection **cp = bsearch(&c, utcp->connections, utcp->nconnections, sizeof *utcp->connections, compare);
+	if(!cp)
+		abort();
 
-		if(utcp->gap >= utcp->nconnections)
-			utcp->gap = -1;
-	} else {
-		// Too many connections?
+	int i = cp - utcp->connections;
+	memmove(cp + i, cp + i + 1, (utcp->nconnections - i - 1) * sizeof *cp);
+	utcp->nconnections--;
 
-		if(utcp->nconnections >= 65536) {
+	free(c);
+}
+
+static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t src, uint16_t dst) {
+	// Check whether this combination of src and dst is free
+	
+	if(src) {
+		if(find_connection(utcp, src, dst)) {
+			errno = EADDRINUSE;
+			return NULL;
+		}
+	} else { // If src == 0, generate a random port number with the high bit set
+		if(utcp->nconnections >= 32767) {
 			errno = ENOMEM;
 			return NULL;
 		}
-
-		// Need to reserve more memory?
-
-		if(utcp->nconnections >= utcp->nallocated) {
-			utcp->nallocated *= 2;
-			utcp->connections = realloc(utcp->connections, utcp->nallocated * sizeof *utcp->connections);
-		}
-
-		c = utcp->connections[utcp->nconnections] = calloc(1, sizeof *c);
-		c->src = utcp->nconnections++;
+		src = rand() | 0x8000;
+		while(find_connection(utcp, src, dst))
+			src++;
 	}
 
+	// Allocate memory for the new connection
+
+	if(utcp->nconnections >= utcp->nallocated) {
+		if(!utcp->nallocated)
+			utcp->nallocated = 4;
+		else
+			utcp->nallocated *= 2;
+		struct utcp_connection **new_array = realloc(utcp->connections, utcp->nallocated * sizeof *utcp->connections);
+		if(!new_array) {
+			errno = ENOMEM;
+			return NULL;
+		}
+		utcp->connections = new_array;
+	}
+
+	struct utcp_connection *c = calloc(1, sizeof *c);
+	if(!c) {
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	// Fill in the details
+
+	c->src = src;
+	c->dst = dst;
 	c->snd.iss = rand();
 	c->snd.una = c->snd.iss;
 	c->snd.nxt = c->snd.iss + 1;
 	c->rcv.wnd = utcp->mtu;
 	c->utcp = utcp;
+
+	// Add it to the sorted list of connections
+
+	utcp->connections[utcp->nconnections++] = c;
+	qsort(utcp->connections, utcp->nconnections, sizeof *utcp->connections, compare);
+
 	return c;
 }
 
-static struct utcp_connection *find_connection(struct utcp *utcp, uint16_t src) {
-	if(src < utcp->nconnections && utcp->connections[src])
-		return utcp->connections[src];
-
-	errno = EINVAL;
-	return NULL;
-}
-
-static void free_connection(struct utcp_connection *c) {
-	if(!c)
-		return;
-	if(c->utcp->gap < 0 || c->src < c->utcp->gap)
-		c->utcp->gap = c->src;
-	c->utcp->connections[c->src] = NULL;
-	free(c);
-}
-
-struct utcp_connection *utcp_connect(struct utcp *utcp, void *data, size_t len, utcp_recv_t recv, void *priv) {
-	struct utcp_connection *c = allocate_connection(utcp);
+struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv) {
+	struct utcp_connection *c = allocate_connection(utcp, 0, dst);
 	if(!c)
 		return NULL;
 
 	c->recv = recv;
 
-	struct {
-		struct hdr hdr;
-		char data[len];
-	} pkt;
+	struct hdr hdr;
 
-	pkt.hdr.src = c->src;
-	pkt.hdr.dst = 0;
-	pkt.hdr.seq = c->snd.iss;
-	pkt.hdr.ack = 0;
-	pkt.hdr.ctl = SYN;
-	pkt.hdr.wnd = c->rcv.wnd;
-	memcpy(pkt.data, data, len);
+	hdr.src = c->src;
+	hdr.dst = c->dst;
+	hdr.seq = c->snd.iss;
+	hdr.ack = 0;
+	hdr.ctl = SYN;
+	hdr.wnd = c->rcv.wnd;
 
 	set_state(c, SYN_SENT);
 
-	utcp->send(utcp, &pkt, sizeof pkt.hdr + len);
+	utcp->send(utcp, &hdr, sizeof hdr);
 
 	// Set timeout?
 
@@ -295,6 +329,15 @@ int utcp_send(struct utcp_connection *c, void *data, size_t len) {
 		errno = EPIPE;
 		return -1;
 	}
+
+	if(!len)
+		return 0;
+
+	if(!data) {
+		errno = EFAULT;
+		return -1;
+	}
+
 	
 	struct {
 		struct hdr hdr;
@@ -328,6 +371,19 @@ static void swap_ports(struct hdr *hdr) {
 }
 
 int utcp_recv(struct utcp *utcp, void *data, size_t len) {
+	if(!utcp) {
+		errno = EFAULT;
+		return -1;
+	}
+
+	if(!len)
+		return 0;
+
+	if(!data) {
+		errno = EFAULT;
+		return -1;
+	}
+
 	fprintf(stderr, "%p got: ", utcp);
 	print_packet(data, len);
 
@@ -346,7 +402,9 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 		return -1;
 	}
 
-	struct utcp_connection *c = find_connection(utcp, hdr.dst);
+	//list_connections(utcp);
+
+	struct utcp_connection *c = find_connection(utcp, hdr.dst, hdr.src);
 
 	// Is it for a new connection?
 
@@ -354,17 +412,14 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 		if(hdr.ctl & RST)
 			return 0;
 
-		if(hdr.ctl & SYN && !(hdr.ctl & ACK) && utcp->accept && (!utcp->pre_accept || utcp->pre_accept(utcp, data, len)) && (c = allocate_connection(utcp))) { // LISTEN
+		if(hdr.ctl & SYN && !(hdr.ctl & ACK) && utcp->accept && (!utcp->pre_accept || utcp->pre_accept(utcp, hdr.dst)) && (c = allocate_connection(utcp, hdr.dst, hdr.src))) { // LISTEN
 			// Return SYN+ACK
 			c->snd.wnd = hdr.wnd;
 			c->rcv.irs = hdr.seq;
-			c->snd.iss = rand();
-			c->snd.una = c->snd.iss;
-			c->snd.nxt = c->snd.iss + 1;
 			c->rcv.nxt = c->rcv.irs + 1;
 			set_state(c, SYN_RECEIVED);
 
-			hdr.dst = c->dst = hdr.src;
+			hdr.dst = c->dst;
 			hdr.src = c->src;
 			hdr.ack = c->rcv.irs + 1;
 			hdr.seq = c->snd.iss;
@@ -509,7 +564,7 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 	switch(c->state) {
 	case SYN_RECEIVED:
 		if(hdr.ack >= c->snd.una && hdr.ack <= c->snd.nxt)
-			c->utcp->accept(c, NULL, 0);
+			c->utcp->accept(c, hdr.dst);
 		
 		if(c->state != ESTABLISHED)
 			goto reset;
@@ -636,21 +691,27 @@ ack_and_drop:
 	return 0;
 }
 
-void utcp_shutdown(struct utcp_connection *c, int dir) {
+int utcp_shutdown(struct utcp_connection *c, int dir) {
+	if(!c) {
+		errno = EFAULT;
+		return -1;
+	}
+
 	if(c->reapable) {
 		fprintf(stderr, "Error: shutdown() called on closed connection %p\n", c);
-		return;
+		errno = EBADF;
+		return -1;
 	}
 
 	// TODO: handle dir
 
 	switch(c->state) {
 	case CLOSED:
-		return;
+		return 0;
 	case LISTEN:
 	case SYN_SENT:
 		set_state(c, CLOSED);
-		return;
+		return 0;
 
 	case SYN_RECEIVED:
 	case ESTABLISHED:
@@ -658,7 +719,7 @@ void utcp_shutdown(struct utcp_connection *c, int dir) {
 		break;
 	case FIN_WAIT_1:
 	case FIN_WAIT_2:
-		return;
+		return 0;
 	case CLOSE_WAIT:
 		set_state(c, LAST_ACK);
 		break;
@@ -666,7 +727,7 @@ void utcp_shutdown(struct utcp_connection *c, int dir) {
 	case CLOSING:
 	case LAST_ACK:
 	case TIME_WAIT:
-		return;
+		return 0;
 	}
 
 	// Send FIN
@@ -683,31 +744,40 @@ void utcp_shutdown(struct utcp_connection *c, int dir) {
 	c->snd.nxt += 1;
 
 	c->utcp->send(c->utcp, &hdr, sizeof hdr);
+	return 0;
 }
 
-void utcp_close(struct utcp_connection *c) {
-	utcp_shutdown(c, SHUT_RDWR);
+int utcp_close(struct utcp_connection *c) {
+	if(utcp_shutdown(c, SHUT_RDWR))
+		return -1;
 	c->reapable = true;
+	return 0;
 }
 
-void utcp_abort(struct utcp_connection *c) {
+int utcp_abort(struct utcp_connection *c) {
+	if(!c) {
+		errno = EFAULT;
+		return -1;
+	}
+
 	if(c->reapable) {
 		fprintf(stderr, "Error: abort() called on closed connection %p\n", c);
-		return;
+		errno = EBADF;
+		return -1;
 	}
 
 	c->reapable = true;
 
 	switch(c->state) {
 	case CLOSED:
-		return;
+		return 0;
 	case LISTEN:
 	case SYN_SENT:
 	case CLOSING:
 	case LAST_ACK:
 	case TIME_WAIT:
 		set_state(c, CLOSED);
-		return;
+		return 0;
 
 	case SYN_RECEIVED:
 	case ESTABLISHED:
@@ -730,6 +800,7 @@ void utcp_abort(struct utcp_connection *c) {
 	hdr.ctl = RST;
 
 	c->utcp->send(c->utcp, &hdr, sizeof hdr);
+	return 0;
 }
 
 void utcp_timeout(struct utcp *utcp) {

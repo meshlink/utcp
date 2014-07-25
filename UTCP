@@ -15,11 +15,9 @@ DIFFERENCES FROM RFC 793:
 * No checksum. UTCP requires the application to handle packet integrity.
 * 32-bit window size. Big window sizes are the default.
 * No ECN, PSH, URG
-* Ports are a bit strange (for now).
 
 TODO v1.0:
 
-* Do ports the same way as real TCP?
 * Implement send buffer
 * Window scaling
 * Handle retransmission

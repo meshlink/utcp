@@ -38,21 +38,21 @@ struct utcp;
 struct utcp_connection;
 #endif
 
-typedef bool (*utcp_pre_accept_t)(struct utcp *utcp, void *data, size_t len);
-typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, void *data, size_t len);
+typedef bool (*utcp_pre_accept_t)(struct utcp *utcp, uint16_t port);
+typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, uint16_t port);
 
 typedef int (*utcp_send_t)(struct utcp *utcp, void *data, size_t len);
 typedef int (*utcp_recv_t)(struct utcp_connection *connection, void *data, size_t len);
 
 extern struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv);
 extern void utcp_exit(struct utcp *utcp);
-extern struct utcp_connection *utcp_connect(struct utcp *utcp, void *data, size_t len, utcp_recv_t recv, void *priv);
+extern struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t port, utcp_recv_t recv, void *priv);
 extern void utcp_accept(struct utcp_connection *utcp, utcp_recv_t recv, void *priv);
 extern int utcp_send(struct utcp_connection *connection, void *data, size_t len);
 extern int utcp_recv(struct utcp *utcp, void *data, size_t len);
-extern void utcp_close(struct utcp_connection *connection);
-extern void utcp_abort(struct utcp_connection *connection);
-extern void utcp_shutdown(struct utcp_connection *connection, int how);
+extern int utcp_close(struct utcp_connection *connection);
+extern int utcp_abort(struct utcp_connection *connection);
+extern int utcp_shutdown(struct utcp_connection *connection, int how);
 extern void utcp_timeout(struct utcp *utcp);
 
 #endif

@@ -30,7 +30,7 @@ int do_recv(struct utcp_connection *c, void *data, size_t len) {
 	return write(0, data, len);
 }
 
-void do_accept(struct utcp_connection *nc, void *data, size_t len) {
+void do_accept(struct utcp_connection *nc, uint16_t port) {
 	utcp_accept(nc, do_recv, NULL);
 	c = nc;
 }
@@ -77,7 +77,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 
 	if(!server)
-		c = utcp_connect(u, "test", 4, do_recv, NULL);
+		c = utcp_connect(u, 1, do_recv, NULL);
 
 	struct pollfd fds[2] = {
 		{.fd = 0, .events = POLLIN | POLLERR | POLLHUP},

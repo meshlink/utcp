@@ -31,14 +31,14 @@ int do_recv(struct utcp_connection *x, void *data, size_t len) {
 	return 0;
 }
 
-bool do_pre_accept(struct utcp *utcp, void *data, size_t len) {
+bool do_pre_accept(struct utcp *utcp, uint16_t port) {
 	fprintf(stderr, "pre-accept\n");
-	if(len != 2 || strncmp(data, "oi", 2))
+	if(port != 7)
 		return false;
 	return true;
 }
 
-void do_accept(struct utcp_connection *c, void *data, size_t len) {
+void do_accept(struct utcp_connection *c, uint16_t port) {
 	fprintf(stderr, "accept\n");
 	utcp_accept(c, do_recv, NULL);
 }
@@ -64,24 +64,24 @@ int main(int argc, char *argv[]) {
 	b = utcp_init(NULL, NULL, do_send, NULL);
 
 	fprintf(stderr, "Testing connection to closed port\n\n");
-	c = utcp_connect(b, "zomg", 4, do_recv, NULL);
+	c = utcp_connect(b, 6, do_recv, NULL);
 
 	fprintf(stderr, "\nTesting conection to non-listening side\n\n");
-	c = utcp_connect(a, "oi", 2, do_recv, NULL);
+	c = utcp_connect(a, 7, do_recv, NULL);
 
 	fprintf(stderr, "\nTesting connection to open port, close\n\n");
-	c = utcp_connect(b, "oi", 2, do_recv, NULL);
+	c = utcp_connect(b, 7, do_recv, NULL);
 	fprintf(stderr, "closing...\n");
 	utcp_close(c);
 
 	fprintf(stderr, "\nTesting connection to open port, abort\n\n");
-	c = utcp_connect(b, "oi", 2, do_recv, NULL);
+	c = utcp_connect(b, 7, do_recv, NULL);
 	fprintf(stderr, "aborting...\n");
 	utcp_abort(c);
 
 	fprintf(stderr, "\nTesting connection with data transfer\n\n");
 
-	c = utcp_connect(b, "oi", 2, do_recv, NULL);
+	c = utcp_connect(b, 7, do_recv, NULL);
 	utcp_send(c, "Hello world!\n", 13);
 	utcp_send(c, "This is a test.\n", 16);
 	fprintf(stderr, "closing...\n");
