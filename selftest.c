@@ -56,7 +56,6 @@ int do_send(struct utcp *utcp, void *data, size_t len) {
 		return utcp_recv(a, data, len);
 }
 
-
 int main(int argc, char *argv[]) {
 	srand(time(NULL));
 
@@ -82,8 +81,23 @@ int main(int argc, char *argv[]) {
 	fprintf(stderr, "\nTesting connection with data transfer\n\n");
 
 	c = utcp_connect(b, 7, do_recv, NULL);
-	utcp_send(c, "Hello world!\n", 13);
-	utcp_send(c, "This is a test.\n", 16);
+	ssize_t len = utcp_send(c, "Hello world!\n", 13);
+
+	if(len != 13) {
+		if(len < 0)
+			fprintf(stderr, "Error: %s\n", strerror(errno));
+		else
+			fprintf(stderr, "Short write %zd!\n", len);
+	}
+	len = utcp_send(c, "This is a test.\n", 16);
+
+	if(len != 16) {
+		if(len < 0)
+			fprintf(stderr, "Error: %s\n", strerror(errno));
+		else
+			fprintf(stderr, "Short write %zd!\n", len);
+	}
+
 	fprintf(stderr, "closing...\n");
 	utcp_close(c);
 

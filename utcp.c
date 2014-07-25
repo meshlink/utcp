@@ -210,7 +210,7 @@ static void free_connection(struct utcp_connection *c) {
 
 static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t src, uint16_t dst) {
 	// Check whether this combination of src and dst is free
-	
+
 	if(src) {
 		if(find_connection(utcp, src, dst)) {
 			errno = EADDRINUSE;
@@ -256,6 +256,10 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	c->snd.nxt = c->snd.iss + 1;
 	c->rcv.wnd = utcp->mtu;
 	c->utcp = utcp;
+	c->sndbufsize = 65536;
+	c->sndbuf = malloc(c->sndbufsize);
+	if(!c->sndbuf)
+		c->sndbufsize = 0;
 
 	// Add it to the sorted list of connections
 
@@ -302,7 +306,7 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 	set_state(c, ESTABLISHED);
 }
 
-int utcp_send(struct utcp_connection *c, void *data, size_t len) {
+ssize_t utcp_send(struct utcp_connection *c, void *data, size_t len) {
 	if(c->reapable) {
 		fprintf(stderr, "Error: send() called on closed connection %p\n", c);
 		errno = EBADF;
@@ -330,6 +334,8 @@ int utcp_send(struct utcp_connection *c, void *data, size_t len) {
 		return -1;
 	}
 
+	// Add data to send buffer
+
 	if(!len)
 		return 0;
 
@@ -338,30 +344,43 @@ int utcp_send(struct utcp_connection *c, void *data, size_t len) {
 		return -1;
 	}
 
-	
+	uint32_t bufused = c->snd.nxt - c->snd.una;
+
+	if(len > c->sndbufsize - bufused)
+		len = c->sndbufsize - bufused;
+
+	memcpy(c->sndbuf + (c->snd.nxt - c->snd.una), data, len);
+
+	// Send segments
+
 	struct {
 		struct hdr hdr;
-		char data[len];
+		char data[c->utcp->mtu];
 	} pkt;
 
 	pkt.hdr.src = c->src;
 	pkt.hdr.dst = c->dst;
-	pkt.hdr.seq = c->snd.nxt;
 	pkt.hdr.ack = c->rcv.nxt;
 	pkt.hdr.wnd = c->snd.wnd;
 	pkt.hdr.ctl = ACK;
 
-	memcpy(pkt.data, data, len);
+	uint32_t left = len;
 
-	c->snd.nxt += len;
+	while(left) {
+		uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
+		pkt.hdr.seq = c->snd.nxt;
 
-	c->utcp->send(c->utcp, &pkt, sizeof pkt.hdr + len);
-	//
-	// Can we add it to the send window?
-	
-	// Do we need to kick some timers?
-	
-	return 0;
+		memcpy(pkt.data, data, seglen);
+
+		c->snd.nxt += seglen;
+		data += seglen;
+		left -= seglen;
+
+		c->utcp->send(c->utcp, &pkt, sizeof pkt.hdr + seglen);
+	}
+
+	fprintf(stderr, "len=%u\n", len);
+	return len;
 }
 
 static void swap_ports(struct hdr *hdr) {
@@ -445,7 +464,7 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 	}
 
 	// It is for an existing connection.
-	
+
 	if(c->state == SYN_SENT) {
 		if(hdr.ctl & ACK) {
 			if(seqdiff(hdr.ack, c->snd.iss) <= 0 || seqdiff(hdr.ack, c->snd.nxt) > 0) {
@@ -514,7 +533,7 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 	c->snd.wnd = hdr.wnd;
 
 	// TODO: check whether segment really starts at rcv.nxt, otherwise trim it.
-	
+
 	if(hdr.ctl & RST) {
 		switch(c->state) {
 		case SYN_RECEIVED:
@@ -659,7 +678,7 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 	}
 
 	// Process the data
-	
+
 	if(len && c->recv) {
 		c->recv(c, data, len);
 		c->rcv.nxt += len;
