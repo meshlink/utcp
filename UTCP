@@ -21,7 +21,6 @@ TODO v1.0:
 * Implement send buffer
 * Window scaling
 * Handle retransmission
-* Do proper modulo 2^32 comparisons of sequence numbers
 
 TODO v2.0:
 

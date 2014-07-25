@@ -370,6 +370,10 @@ static void swap_ports(struct hdr *hdr) {
 	hdr->dst = tmp;
 }
 
+static int16_t seqdiff(uint16_t a, uint16_t b) {
+	return a -b;
+}
+
 int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 	if(!utcp) {
 		errno = EFAULT;
@@ -444,7 +448,7 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 	
 	if(c->state == SYN_SENT) {
 		if(hdr.ctl & ACK) {
-			if(hdr.ack <= c->snd.iss || hdr.ack > c->snd.nxt) {
+			if(seqdiff(hdr.ack, c->snd.iss) <= 0 || seqdiff(hdr.ack, c->snd.nxt) > 0) {
 				fprintf(stderr, "Invalid ACK, %u %u %u\n", hdr.ack, c->snd.iss, c->snd.nxt);
 				goto reset;
 			}
@@ -465,7 +469,7 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 
 			if(hdr.ctl & ACK)
 				c->snd.una = hdr.ack;
-			if(c->snd.una > c->snd.iss) {
+			if(seqdiff(c->snd.una, c->snd.iss) > 0) {
 				set_state(c, ESTABLISHED);
 				// TODO: signal app?
 				swap_ports(&hdr);
@@ -563,7 +567,7 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 
 	switch(c->state) {
 	case SYN_RECEIVED:
-		if(hdr.ack >= c->snd.una && hdr.ack <= c->snd.nxt)
+		if(seqdiff(hdr.ack, c->snd.una) >= 0 && seqdiff(hdr.ack, c->snd.nxt) <= 0)
 			c->utcp->accept(c, hdr.dst);
 		
 		if(c->state != ESTABLISHED)
@@ -571,13 +575,13 @@ int utcp_recv(struct utcp *utcp, void *data, size_t len) {
 		break;
 	case ESTABLISHED:
 	case CLOSE_WAIT:
-		if(hdr.ack < c->snd.una)
+		if(seqdiff(hdr.ack, c->snd.una) < 0)
 			return 0;
-		if(hdr.ack > c->snd.nxt)
+		if(seqdiff(hdr.ack, c->snd.nxt) > 0)
 			goto ack_and_drop;
-		if(hdr.ack > c->snd.una && hdr.ack <= c->snd.nxt) {
+		if(seqdiff(hdr.ack, c->snd.una) > 0 && seqdiff(hdr.ack, c->snd.nxt) <= 0) {
 			c->snd.una = hdr.ack;
-			if(c->snd.wl1 < hdr.seq || (c->snd.wl1 == hdr.seq && c->snd.wl2 <= hdr.ack)) {
+			if(seqdiff(c->snd.wl1, hdr.seq) < 0 || (c->snd.wl1 == hdr.seq && seqdiff(c->snd.wl2, hdr.ack) <= 0)) {
 				c->snd.wnd = hdr.wnd;
 				c->snd.wl1 = hdr.seq;
 				c->snd.wl2 = hdr.ack;
