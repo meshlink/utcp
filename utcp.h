@@ -53,6 +53,7 @@ extern int utcp_recv(struct utcp *utcp, const void *data, size_t len);
 extern int utcp_close(struct utcp_connection *connection);
 extern int utcp_abort(struct utcp_connection *connection);
 extern int utcp_shutdown(struct utcp_connection *connection, int how);
-extern void utcp_timeout(struct utcp *utcp);
+extern int utcp_timeout(struct utcp *utcp);
+extern int utcp_set_connection_timeout(struct utcp *utcp, int seconds);
 
 #endif

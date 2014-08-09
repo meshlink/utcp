@@ -19,15 +19,16 @@ bool running = true;
 
 int do_recv(struct utcp_connection *c, const void *data, size_t len) {
 	if(!data || !len) {
-		if(errno)
+		if(errno) {
 			fprintf(stderr, "Error: %s\n", strerror(errno));
-		else {
+			dir = 0;
+		} else {
 			dir &= ~2;
 			fprintf(stderr, "Connection closed by peer\n");
 		}
 		return 0;
 	}
-	return write(0, data, len);
+	return write(1, data, len);
 }
 
 void do_accept(struct utcp_connection *nc, uint16_t port) {
@@ -76,6 +77,8 @@ int main(int argc, char *argv[]) {
 	if(!u)
 		return 1;
 
+	utcp_set_connection_timeout(u, 10);
+
 	if(!server)
 		c = utcp_connect(u, 1, do_recv, NULL);
 
@@ -85,13 +88,10 @@ int main(int argc, char *argv[]) {
 	};
 
 	char buf[1024];
+	int timeout = utcp_timeout(u);
 
 	while(dir) {
-		int r = poll(fds, 2, 1000);
-		if(!r) {
-			utcp_timeout(u);
-			continue;
-		}
+		poll(fds, 2, timeout);
 
 		if(fds[0].revents) {
 			int len = read(0, buf, sizeof buf);
@@ -120,6 +120,8 @@ int main(int argc, char *argv[]) {
 					connected = true;
 			utcp_recv(u, buf, len);
 		}
+
+		timeout = utcp_timeout(u);
 	};
 
 	utcp_close(c);

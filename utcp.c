@@ -122,15 +122,17 @@ struct utcp {
 	utcp_send_t send;
 
 	uint16_t mtu;
+	int timeout;
 
 	struct utcp_connection **connections;
 	int nconnections;
 	int nallocated;
-	int gap;
 };
 
 static void set_state(struct utcp_connection *c, enum state state) {
 	c->state = state;
+	if(state == ESTABLISHED)
+		timerclear(&c->conn_timeout);
 	fprintf(stderr, "%p new state: %s\n", c->utcp, strstate[state]);
 }
 
@@ -163,7 +165,7 @@ static void print_packet(const void *pkt, size_t len) {
 	fprintf(stderr, "\n");
 }
 
-static void list_connections(struct utcp *utcp) {
+static inline void list_connections(struct utcp *utcp) {
 	fprintf(stderr, "%p has %d connections:\n", utcp, utcp->nconnections);
 	for(int i = 0; i < utcp->nconnections; i++)
 		fprintf(stderr, "  %u -> %u state %s\n", utcp->connections[i]->src, utcp->connections[i]->dst, strstate[utcp->connections[i]->state]);
@@ -289,7 +291,8 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
 
 	utcp->send(utcp, &hdr, sizeof hdr);
 
-	// Set timeout?
+	gettimeofday(&c->conn_timeout, NULL);
+	c->conn_timeout.tv_sec += utcp->timeout;
 
 	return c;
 }
@@ -379,7 +382,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		c->utcp->send(c->utcp, &pkt, sizeof pkt.hdr + seglen);
 	}
 
-	fprintf(stderr, "len=%u\n", len);
+	fprintf(stderr, "len=%zu\n", len);
 	return len;
 }
 
@@ -389,8 +392,8 @@ static void swap_ports(struct hdr *hdr) {
 	hdr->dst = tmp;
 }
 
-static int16_t seqdiff(uint16_t a, uint16_t b) {
-	return a -b;
+static int32_t seqdiff(uint32_t a, uint32_t b) {
+	return a - b;
 }
 
 int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
@@ -477,7 +480,8 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				return 0;
 			set_state(c, CLOSED);
 			errno = ECONNREFUSED;
-			c->recv(c, NULL, 0);
+			if(c->recv)
+				c->recv(c, NULL, 0);
 			return 0;
 		}
 		if(hdr.ctl & SYN) {
@@ -545,7 +549,8 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case CLOSE_WAIT:
 			set_state(c, CLOSED);
 			errno = ECONNRESET;
-			c->recv(c, NULL, 0);
+			if(c->recv)
+				c->recv(c, NULL, 0);
 			break;
 		case CLOSING:
 		case LAST_ACK:
@@ -572,7 +577,8 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case TIME_WAIT:
 			set_state(c, CLOSED);
 			errno = ECONNRESET;
-			c->recv(c, NULL, 0);
+			if(c->recv)
+				c->recv(c, NULL, 0);
 			goto reset;
 			break;
 		default:
@@ -709,7 +715,8 @@ ack_and_drop:
 	utcp->send(utcp, &hdr, sizeof hdr);
 	if(c->state == CLOSE_WAIT || c->state == TIME_WAIT) {
 		errno = 0;
-		c->recv(c, NULL, 0);
+		if(c->recv)
+			c->recv(c, NULL, 0);
 	}
 	return 0;
 }
@@ -826,37 +833,113 @@ int utcp_abort(struct utcp_connection *c) {
 	return 0;
 }
 
-void utcp_timeout(struct utcp *utcp) {
+static void retransmit(struct utcp_connection *c) {
+	if(c->state == CLOSED || c->snd.nxt == c->snd.una)
+		return;
+
+	struct utcp *utcp = c->utcp;
+
+	struct {
+		struct hdr hdr;
+		char data[c->utcp->mtu];
+	} pkt;
+
+	pkt.hdr.src = c->src;
+	pkt.hdr.dst = c->dst;
+
+	switch(c->state) {
+		case LISTEN:
+			// TODO: this should not happen
+			break;
+
+		case SYN_SENT:
+			pkt.hdr.seq = c->snd.iss;
+			pkt.hdr.ack = 0;
+			pkt.hdr.wnd = c->rcv.wnd;
+			pkt.hdr.ctl = SYN;
+			utcp->send(utcp, &pkt, sizeof pkt.hdr);
+			break;
+
+		case SYN_RECEIVED:
+			pkt.hdr.seq = c->snd.nxt;
+			pkt.hdr.ack = c->rcv.nxt;
+			pkt.hdr.ctl = SYN | ACK;
+			utcp->send(utcp, &pkt, sizeof pkt.hdr);
+			break;
+
+		case ESTABLISHED:
+			pkt.hdr.seq = c->snd.una;
+			pkt.hdr.ack = c->rcv.nxt;
+			pkt.hdr.ctl = ACK;
+			uint32_t len = seqdiff(c->snd.nxt, c->snd.una);
+			if(len > utcp->mtu)
+				len = utcp->mtu;
+			memcpy(pkt.data, c->sndbuf, len);
+			utcp->send(utcp, &pkt, sizeof pkt.hdr + len);
+			break;
+
+		default:
+			// TODO: implement
+			abort();
+	}
+}
+
+/* Handle timeouts.
+ * One call to this function will loop through all connections,
+ * checking if something needs to be resent or not.
+ * The return value is the time to the next timeout in milliseconds,
+ * or maybe a negative value if the timeout is infinite.
+ */
+int utcp_timeout(struct utcp *utcp) {
 	struct timeval now;
 	gettimeofday(&now, NULL);
+	struct timeval next = {now.tv_sec + 3600, now.tv_usec};
 
 	for(int i = 0; i < utcp->nconnections; i++) {
 		struct utcp_connection *c = utcp->connections[i];
 		if(!c)
 			continue;
 
-		if(c->reapable) {
-			fprintf(stderr, "Reaping %p\n", c);
-			free_connection(c);
+		if(c->state == CLOSED) {
+			if(c->reapable) {
+				fprintf(stderr, "Reaping %p\n", c);
+				free_connection(c);
+				i--;
+			}
 			continue;
 		}
 
-		if(c->state == CLOSED)
-			return;
-
-		if(c->conn_timeout.tv_sec && timercmp(&c->conn_timeout, &now, <)) {
-			if(!c->reapable) {
-				errno = ETIMEDOUT;
-				c->recv(c, NULL, 0);
-			}
+		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &now, <)) {
+			errno = ETIMEDOUT;
 			c->state = CLOSED;
-			return;
+			if(c->recv)
+				c->recv(c, NULL, 0);
+			continue;
 		}
 
-		if(c->rtrx_timeout.tv_sec && timercmp(&c->rtrx_timeout, &now, <)) {
-			// TODO: retransmit stuff;
+		if(timerisset(&c->rtrx_timeout) && timercmp(&c->rtrx_timeout, &now, <)) {
+			retransmit(c);
 		}
+
+		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <))
+			next = c->conn_timeout;
+
+		if(c->snd.nxt != c->snd.una) {
+			c->rtrx_timeout = now;
+			c->rtrx_timeout.tv_sec++;
+		} else {
+			timerclear(&c->rtrx_timeout);
+		}
+
+		if(timerisset(&c->rtrx_timeout) && timercmp(&c->rtrx_timeout, &next, <))
+			next = c->rtrx_timeout;
 	}
+
+	struct timeval diff;
+	timersub(&next, &now, &diff);
+	if(diff.tv_sec < 0)
+		return 0;
+	return diff.tv_sec * 1000 + diff.tv_usec / 1000;
 }
 
 struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv) {
@@ -864,12 +947,17 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 	if(!utcp)
 		return NULL;
 
+	if(!send) {
+		errno = EFAULT;
+		return NULL;
+	}
+
 	utcp->accept = accept;
 	utcp->pre_accept = pre_accept;
 	utcp->send = send;
 	utcp->priv = priv;
-	utcp->gap = -1;
 	utcp->mtu = 1000;
+	utcp->timeout = 60;
 
 	return utcp;
 }
@@ -880,4 +968,10 @@ void utcp_exit(struct utcp *utcp) {
 	for(int i = 0; i < utcp->nconnections; i++)
 		free_connection(utcp->connections[i]);
 	free(utcp);
+}
+
+int utcp_set_connection_timeout(struct utcp *u, int timeout) {
+	int prev = u->timeout;
+	u->timeout = timeout;
+	return prev;
 }
