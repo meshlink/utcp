@@ -597,6 +597,8 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		
 		if(c->state != ESTABLISHED)
 			goto reset;
+
+		c->snd.una = hdr.ack;
 		break;
 	case ESTABLISHED:
 	case CLOSE_WAIT:
