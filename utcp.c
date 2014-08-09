@@ -136,15 +136,15 @@ static void set_state(struct utcp_connection *c, enum state state) {
 	fprintf(stderr, "%p new state: %s\n", c->utcp, strstate[state]);
 }
 
-static void print_packet(const void *pkt, size_t len) {
+static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, size_t len) {
 	struct hdr hdr;
 	if(len < sizeof hdr) {
-		fprintf(stderr, "short packet (%zu bytes)\n", len);
+		fprintf(stderr, "%p %s: short packet (%zu bytes)\n", utcp, dir, len);
 		return;
 	}
 
 	memcpy(&hdr, pkt, sizeof hdr);
-	fprintf (stderr, "src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
+	fprintf (stderr, "%p %s: src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
 	if(hdr.ctl & SYN)
 		fprintf(stderr, "SYN");
 	if(hdr.ctl & RST)
@@ -289,6 +289,7 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
 
 	set_state(c, SYN_SENT);
 
+	print_packet(utcp, "send", &hdr, sizeof hdr);
 	utcp->send(utcp, &hdr, sizeof hdr);
 
 	gettimeofday(&c->conn_timeout, NULL);
@@ -379,6 +380,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		data += seglen;
 		left -= seglen;
 
+		print_packet(c->utcp, "send", &pkt, sizeof pkt.hdr + seglen);
 		c->utcp->send(c->utcp, &pkt, sizeof pkt.hdr + seglen);
 	}
 
@@ -410,8 +412,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return -1;
 	}
 
-	fprintf(stderr, "%p got: ", utcp);
-	print_packet(data, len);
+	print_packet(utcp, "recv", data, len);
 
 	struct hdr hdr;
 	if(len < sizeof hdr) {
@@ -450,6 +451,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			hdr.ack = c->rcv.irs + 1;
 			hdr.seq = c->snd.iss;
 			hdr.ctl = SYN | ACK;
+			print_packet(c->utcp, "send", &hdr, sizeof hdr);
 			utcp->send(utcp, &hdr, sizeof hdr);
 			return 0;
 		} else { // CLOSED
@@ -506,6 +508,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				hdr.ack = c->rcv.nxt;
 				hdr.ctl = SYN | ACK;
 			}
+			print_packet(c->utcp, "send", &hdr, sizeof hdr);
 			utcp->send(utcp, &hdr, sizeof hdr);
 			// TODO: queue any data?
 		}
@@ -706,6 +709,7 @@ reset:
 		hdr.seq = 0;
 		hdr.ctl = RST | ACK;
 	}
+	print_packet(c->utcp, "send", &hdr, sizeof hdr);
 	utcp->send(utcp, &hdr, sizeof hdr);
 	return 0;
 
@@ -714,6 +718,7 @@ ack_and_drop:
 	hdr.seq = c->snd.nxt;
 	hdr.ack = c->rcv.nxt;
 	hdr.ctl = ACK;
+	print_packet(c->utcp, "send", &hdr, sizeof hdr);
 	utcp->send(utcp, &hdr, sizeof hdr);
 	if(c->state == CLOSE_WAIT || c->state == TIME_WAIT) {
 		errno = 0;
@@ -775,6 +780,7 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 
 	c->snd.nxt += 1;
 
+	print_packet(c->utcp, "send", &hdr, sizeof hdr);
 	c->utcp->send(c->utcp, &hdr, sizeof hdr);
 	return 0;
 }
@@ -831,6 +837,7 @@ int utcp_abort(struct utcp_connection *c) {
 	hdr.wnd = 0;
 	hdr.ctl = RST;
 
+	print_packet(c->utcp, "send", &hdr, sizeof hdr);
 	c->utcp->send(c->utcp, &hdr, sizeof hdr);
 	return 0;
 }
@@ -859,6 +866,7 @@ static void retransmit(struct utcp_connection *c) {
 			pkt.hdr.ack = 0;
 			pkt.hdr.wnd = c->rcv.wnd;
 			pkt.hdr.ctl = SYN;
+			print_packet(c->utcp, "rtrx", &pkt, sizeof pkt.hdr);
 			utcp->send(utcp, &pkt, sizeof pkt.hdr);
 			break;
 
@@ -866,6 +874,7 @@ static void retransmit(struct utcp_connection *c) {
 			pkt.hdr.seq = c->snd.nxt;
 			pkt.hdr.ack = c->rcv.nxt;
 			pkt.hdr.ctl = SYN | ACK;
+			print_packet(c->utcp, "rtrx", &pkt, sizeof pkt.hdr);
 			utcp->send(utcp, &pkt, sizeof pkt.hdr);
 			break;
 
@@ -877,6 +886,7 @@ static void retransmit(struct utcp_connection *c) {
 			if(len > utcp->mtu)
 				len = utcp->mtu;
 			memcpy(pkt.data, c->sndbuf, len);
+			print_packet(c->utcp, "rtrx", &pkt, sizeof pkt.hdr + len);
 			utcp->send(utcp, &pkt, sizeof pkt.hdr + len);
 			break;
 
