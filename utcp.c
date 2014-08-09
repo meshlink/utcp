@@ -134,7 +134,7 @@ static void set_state(struct utcp_connection *c, enum state state) {
 	fprintf(stderr, "%p new state: %s\n", c->utcp, strstate[state]);
 }
 
-static void print_packet(void *pkt, size_t len) {
+static void print_packet(const void *pkt, size_t len) {
 	struct hdr hdr;
 	if(len < sizeof hdr) {
 		fprintf(stderr, "short packet (%zu bytes)\n", len);
@@ -155,7 +155,7 @@ static void print_packet(void *pkt, size_t len) {
 	if(len > sizeof hdr) {
 		fprintf(stderr, " data=");
 		for(int i = sizeof hdr; i < len; i++) {
-			char *data = pkt;
+			const char *data = pkt;
 			fprintf(stderr, "%c", data[i] >= 32 ? data[i] : '.');
 		}
 	}
@@ -306,7 +306,7 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 	set_state(c, ESTABLISHED);
 }
 
-ssize_t utcp_send(struct utcp_connection *c, void *data, size_t len) {
+ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	if(c->reapable) {
 		fprintf(stderr, "Error: send() called on closed connection %p\n", c);
 		errno = EBADF;
@@ -393,7 +393,7 @@ static int16_t seqdiff(uint16_t a, uint16_t b) {
 	return a -b;
 }
 
-int utcp_recv(struct utcp *utcp, void *data, size_t len) {
+int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	if(!utcp) {
 		errno = EFAULT;
 		return -1;

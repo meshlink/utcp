@@ -17,7 +17,7 @@ struct utcp_connection *c;
 int dir = 3;
 bool running = true;
 
-int do_recv(struct utcp_connection *c, void *data, size_t len) {
+int do_recv(struct utcp_connection *c, const void *data, size_t len) {
 	if(!data || !len) {
 		if(errno)
 			fprintf(stderr, "Error: %s\n", strerror(errno));
@@ -35,7 +35,7 @@ void do_accept(struct utcp_connection *nc, uint16_t port) {
 	c = nc;
 }
 
-int do_send(struct utcp *utcp, void *data, size_t len) {
+int do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
 	return send(s, data, len, MSG_DONTWAIT);
 }

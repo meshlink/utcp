@@ -10,7 +10,7 @@ struct utcp *a;
 struct utcp *b;
 struct utcp_connection *c;
 
-int do_recv(struct utcp_connection *x, void *data, size_t len) {
+int do_recv(struct utcp_connection *x, const void *data, size_t len) {
 	if(!len) {
 		if(errno)
 			fprintf(stderr, "%p Error: %s\n", x->utcp, strerror(errno));
@@ -43,7 +43,7 @@ void do_accept(struct utcp_connection *c, uint16_t port) {
 	utcp_accept(c, do_recv, NULL);
 }
 
-int do_send(struct utcp *utcp, void *data, size_t len) {
+int do_send(struct utcp *utcp, const void *data, size_t len) {
 	static int count = 0;
 	if(++count > 1000) {
 		fprintf(stderr, "Too many packets!\n");
