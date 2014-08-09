@@ -16,6 +16,8 @@
 struct utcp_connection *c;
 int dir = 3;
 bool running = true;
+double dropin;
+double dropout;
 
 int do_recv(struct utcp_connection *c, const void *data, size_t len) {
 	if(!data || !len) {
@@ -38,17 +40,24 @@ void do_accept(struct utcp_connection *nc, uint16_t port) {
 
 int do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
-	return send(s, data, len, MSG_DONTWAIT);
+	if(drand48() >= dropout)
+		return send(s, data, len, MSG_DONTWAIT);
+	else
+		return 0;
 }
 
 int main(int argc, char *argv[]) {
 	srand(time(NULL));
+	srand48(time(NULL));
 
 	if(argc < 2 || argc > 3)
 		return 1;
 
 	bool server = argc == 2;
 	bool connected = false;
+
+	dropin = atof(getenv("DROPIN") ?: "0");
+	dropout = atof(getenv("DROPOUT") ?: "0");
 
 	struct addrinfo *ai;
 	struct addrinfo hint = {
@@ -118,7 +127,8 @@ int main(int argc, char *argv[]) {
 			if(!connected)
 				if(!connect(s, (struct sockaddr *)&ss, sl))
 					connected = true;
-			utcp_recv(u, buf, len);
+			if(drand48() >= dropin)
+				utcp_recv(u, buf, len);
 		}
 
 		timeout = utcp_timeout(u);
