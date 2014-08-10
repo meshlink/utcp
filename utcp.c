@@ -92,16 +92,12 @@ struct utcp_connection {
 		uint32_t una;
 		uint32_t nxt;
 		uint32_t wnd;
-		uint32_t up;
-		uint32_t wl1;
-		uint32_t wl2;
 		uint32_t iss;
 	} snd;
 
 	struct {
 		uint32_t nxt;
 		uint32_t wnd;
-		uint32_t up;
 		uint32_t irs;
 	} rcv;
 
@@ -414,33 +410,56 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	print_packet(utcp, "recv", data, len);
 
+	// Drop packets smaller than the header
+
 	struct hdr hdr;
 	if(len < sizeof hdr) {
 		errno = EBADMSG;
 		return -1;
 	}
 
+	// Make a copy from the potentially unaligned data to a struct hdr
+
 	memcpy(&hdr, data, sizeof hdr);
 	data += sizeof hdr;
 	len -= sizeof hdr;
+
+	// Drop packets with an unknown CTL flag
 
 	if(hdr.ctl & ~(SYN | ACK | RST | FIN)) {
 		errno = EBADMSG;
 		return -1;
 	}
 
-	//list_connections(utcp);
+	// Try to match the packet to an existing connection
 
 	struct utcp_connection *c = find_connection(utcp, hdr.dst, hdr.src);
 
 	// Is it for a new connection?
 
 	if(!c) {
+		// Ignore RST packets
+
 		if(hdr.ctl & RST)
 			return 0;
 
-		if(hdr.ctl & SYN && !(hdr.ctl & ACK) && utcp->accept && (!utcp->pre_accept || utcp->pre_accept(utcp, hdr.dst)) && (c = allocate_connection(utcp, hdr.dst, hdr.src))) { // LISTEN
-			// Return SYN+ACK
+		// Is it a SYN packet and are we LISTENing?
+
+		if(hdr.ctl & SYN && !(hdr.ctl & ACK) && utcp->accept) {
+			// If we don't want to accept it, send a RST back
+			if((utcp->pre_accept && !utcp->pre_accept(utcp, hdr.dst))) {
+				len = 1;
+				goto reset;
+			}
+
+			// Try to allocate memory, otherwise send a RST back
+			c = allocate_connection(utcp, hdr.dst, hdr.src);
+			if(!c) {
+				len = 1;
+				goto reset;
+			}
+
+			// Return SYN+ACK, go to SYN_RECEIVED state
 			c->snd.wnd = hdr.wnd;
 			c->rcv.irs = hdr.seq;
 			c->rcv.nxt = c->rcv.irs + 1;
@@ -453,203 +472,35 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			hdr.ctl = SYN | ACK;
 			print_packet(c->utcp, "send", &hdr, sizeof hdr);
 			utcp->send(utcp, &hdr, sizeof hdr);
-			return 0;
-		} else { // CLOSED
+		} else {
+			// No, we don't want your packets, send a RST back
 			len = 1;
 			goto reset;
 		}
+
+		return 0;
 	}
 
 	fprintf(stderr, "%p state %s\n", c->utcp, strstate[c->state]);
 
-	if(c->state == CLOSED) {
-		fprintf(stderr, "Error: packet recv()d on closed connection %p\n", c);
-		errno = EBADF;
-		return -1;
-	}
+	// In case this is for a CLOSED connection, ignore the packet.
+	// TODO: make it so incoming packets can never match a CLOSED connection.
+
+	if(c->state == CLOSED)
+		return 0;
 
 	// It is for an existing connection.
 
-	if(c->state == SYN_SENT) {
-		if(hdr.ctl & ACK) {
-			if(seqdiff(hdr.ack, c->snd.iss) <= 0 || seqdiff(hdr.ack, c->snd.nxt) > 0) {
-				fprintf(stderr, "Invalid ACK, %u %u %u\n", hdr.ack, c->snd.iss, c->snd.nxt);
-				goto reset;
-			}
-		}
-		if(hdr.ctl & RST) {
-			if(!(hdr.ctl & ACK))
-				return 0;
-			set_state(c, CLOSED);
-			errno = ECONNREFUSED;
-			if(c->recv)
-				c->recv(c, NULL, 0);
-			return 0;
-		}
-		if(hdr.ctl & SYN) {
-			c->dst = hdr.src;
-			c->rcv.nxt = hdr.seq + 1;
-			c->rcv.irs = hdr.seq;
-			c->snd.wnd = hdr.wnd;
+	// 1. Drop invalid packets.
 
-			if(hdr.ctl & ACK)
-				c->snd.una = hdr.ack;
-			if(seqdiff(c->snd.una, c->snd.iss) > 0) {
-				set_state(c, ESTABLISHED);
-				// TODO: signal app?
-				swap_ports(&hdr);
-				hdr.seq = c->snd.nxt;
-				hdr.ack = c->rcv.nxt;
-				hdr.ctl = ACK;
-			} else {
-				set_state(c, SYN_RECEIVED);
-				swap_ports(&hdr);
-				hdr.seq = c->snd.iss;
-				hdr.ack = c->rcv.nxt;
-				hdr.ctl = SYN | ACK;
-			}
-			print_packet(c->utcp, "send", &hdr, sizeof hdr);
-			utcp->send(utcp, &hdr, sizeof hdr);
-			// TODO: queue any data?
-		}
-
-		return 0;
-	}
-
-	bool acceptable;
-
-	if(len == 0)
-		if(c->rcv.wnd == 0)
-			acceptable = hdr.seq == c->rcv.nxt;
-		else
-			acceptable = (hdr.seq >= c->rcv.nxt && hdr.seq < c->rcv.nxt + c->rcv.wnd);
-	else
-		if(c->rcv.wnd == 0)
-			acceptable = false;
-		else
-			acceptable = (hdr.seq >= c->rcv.nxt && hdr.seq < c->rcv.nxt + c->rcv.wnd)
-				|| (hdr.seq + len - 1 >= c->rcv.nxt && hdr.seq + len - 1 < c->rcv.nxt + c->rcv.wnd);
-
-	if(!acceptable) {
-		fprintf(stderr, "Packet not acceptable, %u %u %u %zu\n", hdr.seq, c->rcv.nxt, c->rcv.wnd, len);
-		if(hdr.ctl & RST)
-			return 0;
-		goto ack_and_drop;
-	}
-
-	c->snd.wnd = hdr.wnd;
-
-	// TODO: check whether segment really starts at rcv.nxt, otherwise trim it.
-
-	if(hdr.ctl & RST) {
-		switch(c->state) {
-		case SYN_RECEIVED:
-			// TODO: delete connection?
-			break;
-		case ESTABLISHED:
-		case FIN_WAIT_1:
-		case FIN_WAIT_2:
-		case CLOSE_WAIT:
-			set_state(c, CLOSED);
-			errno = ECONNRESET;
-			if(c->recv)
-				c->recv(c, NULL, 0);
-			break;
-		case CLOSING:
-		case LAST_ACK:
-		case TIME_WAIT:
-			// TODO: delete connection?
-			break;
-		default:
-			// TODO: wtf?
-			return 0;
-		}
-		set_state(c, CLOSED);
-		return 0;
-	}
-
-	if(hdr.ctl & SYN) {
-		switch(c->state) {
-		case SYN_RECEIVED:
-		case ESTABLISHED:
-		case FIN_WAIT_1:
-		case FIN_WAIT_2:
-		case CLOSE_WAIT:
-		case CLOSING:
-		case LAST_ACK:
-		case TIME_WAIT:
-			set_state(c, CLOSED);
-			errno = ECONNRESET;
-			if(c->recv)
-				c->recv(c, NULL, 0);
-			goto reset;
-			break;
-		default:
-			// TODO: wtf?
-			return 0;
-		}
-	}
-
-	if(!(hdr.ctl & ACK))
-		return 0;
+	// 1a. Drop packets that should not happen in our current state.
 
 	switch(c->state) {
+	case SYN_SENT:
 	case SYN_RECEIVED:
-		if(seqdiff(hdr.ack, c->snd.una) >= 0 && seqdiff(hdr.ack, c->snd.nxt) <= 0)
-			c->utcp->accept(c, hdr.dst);
-		
-		if(c->state != ESTABLISHED)
-			goto reset;
-
-		c->snd.una = hdr.ack;
-		break;
-	case ESTABLISHED:
-	case CLOSE_WAIT:
-		if(seqdiff(hdr.ack, c->snd.una) < 0)
-			return 0;
-		if(seqdiff(hdr.ack, c->snd.nxt) > 0)
-			goto ack_and_drop;
-		if(seqdiff(hdr.ack, c->snd.una) > 0 && seqdiff(hdr.ack, c->snd.nxt) <= 0) {
-			c->snd.una = hdr.ack;
-			if(seqdiff(c->snd.wl1, hdr.seq) < 0 || (c->snd.wl1 == hdr.seq && seqdiff(c->snd.wl2, hdr.ack) <= 0)) {
-				c->snd.wnd = hdr.wnd;
-				c->snd.wl1 = hdr.seq;
-				c->snd.wl2 = hdr.ack;
-			}
-		}
-		break;
-	case FIN_WAIT_1:
-		if(hdr.ack == c->snd.nxt)
-			set_state(c, FIN_WAIT_2);
-		break;
-	case FIN_WAIT_2:
-		// TODO: If nothing left to send, close.
-		break;
-	case CLOSING:
-		if(hdr.ack == c->snd.nxt) {
-			set_state(c, TIME_WAIT);
-		}
-		break;
-	case LAST_ACK:
-		if(hdr.ack == c->snd.nxt) {
-			set_state(c, CLOSED);
-		}
-		return 0;
-	case TIME_WAIT:
-		// TODO: retransmission of remote FIN, ACK and restart 2 MSL timeout
-		break;
-	default:
-		goto reset;
-	}
-
-	// Process data
-
-	switch(c->state) {
 	case ESTABLISHED:
 	case FIN_WAIT_1:
 	case FIN_WAIT_2:
-		// TODO: process the data, see page 74
-		break;
 	case CLOSE_WAIT:
 	case CLOSING:
 	case LAST_ACK:
@@ -659,43 +510,263 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		abort();
 	}
 
-	if(hdr.ctl & FIN) {
+	// 1b. Drop packets with a sequence number not in our receive window.
+
+	bool acceptable;
+
+	if(c->state == SYN_SENT)
+		acceptable = true;
+
+	// TODO: handle packets overlapping c->rcv.nxt.
+#if 0
+	// Only use this when accepting out-of-order packets.
+	else if(len == 0)
+		if(c->rcv.wnd == 0)
+			acceptable = hdr.seq == c->rcv.nxt;
+		else
+			acceptable = (seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt + c->rcv.wnd) < 0);
+	else
+		if(c->rcv.wnd == 0)
+			// We don't accept data when the receive window is zero.
+			acceptable = false;
+		else
+			// Both start and end of packet must be within the receive window
+			acceptable = (seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt + c->rcv.wnd) < 0)
+				|| (seqdiff(hdr.seq + len + 1, c->rcv.nxt) >= 0 && seqdiff(hdr.seq + len - 1, c->rcv.nxt + c->rcv.wnd) < 0);
+#else
+	if(c->state != SYN_SENT)
+		acceptable = hdr.seq == c->rcv.nxt;
+#endif
+
+	if(!acceptable) {
+		fprintf(stderr, "Packet not acceptable, %u  <= %u + %zu < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
+		// Ignore unacceptable RST packets.
+		if(hdr.ctl & RST)
+			return 0;
+		// Otherwise, send an ACK back in the hope things improve.
+		goto ack;
+	}
+
+	c->snd.wnd = hdr.wnd; // TODO: move below
+
+	// 1c. Drop packets with an invalid ACK.
+	// ackno should not roll back, and it should also not be bigger than snd.nxt.
+
+	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.nxt) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
+		fprintf(stderr, "Packet ack seqno out of range, %u %u %u\n", hdr.ack, c->snd.una, c->snd.nxt);
+		// Ignore unacceptable RST packets.
+		if(hdr.ctl & RST)
+			return 0;
+		goto reset;
+	}
+
+	// 2. Handle RST packets
+
+	if(hdr.ctl & RST) {
 		switch(c->state) {
-		case CLOSED:
-		case LISTEN:
 		case SYN_SENT:
+			if(!(hdr.ctl & ACK))
+				return 0;
+			// The peer has refused our connection.
+			set_state(c, CLOSED);
+			errno = ECONNREFUSED;
+			if(c->recv)
+				c->recv(c, NULL, 0);
 			return 0;
 		case SYN_RECEIVED:
+			if(hdr.ctl & ACK)
+				return 0;
+			// We haven't told the application about this connection yet. Silently delete.
+			free_connection(c);
+			return 0;
 		case ESTABLISHED:
-			set_state(c, CLOSE_WAIT);
-			c->rcv.nxt++;
-			goto ack_and_drop;
 		case FIN_WAIT_1:
-			set_state(c, CLOSING);
-			c->rcv.nxt++;
-			goto ack_and_drop;
 		case FIN_WAIT_2:
-			set_state(c, TIME_WAIT);
-			c->rcv.nxt++;
-			goto ack_and_drop;
 		case CLOSE_WAIT:
+			if(hdr.ctl & ACK)
+				return 0;
+			// The peer has aborted our connection.
+			set_state(c, CLOSED);
+			errno = ECONNRESET;
+			if(c->recv)
+				c->recv(c, NULL, 0);
+			return 0;
 		case CLOSING:
 		case LAST_ACK:
 		case TIME_WAIT:
-			break;
+			if(hdr.ctl & ACK)
+				return 0;
+			// As far as the application is concerned, the connection has already been closed.
+			// If it has called utcp_close() already, we can immediately free this connection.
+			if(c->reapable) {
+				free_connection(c);
+				return 0;
+			}
+			// Otherwise, immediately move to the CLOSED state.
+			set_state(c, CLOSED);
+			return 0;
 		default:
 			abort();
 		}
 	}
 
-	// Process the data
+	// 3. Advance snd.una
 
-	if(len && c->recv) {
-		c->recv(c, data, len);
-		c->rcv.nxt += len;
-		goto ack_and_drop;
+	uint32_t advanced = seqdiff(hdr.ack, c->snd.una);
+	c->snd.una = hdr.ack;
+
+	if(advanced) {
+		fprintf(stderr, "%p advanced %u\n", utcp, advanced);
+		// Make room in the send buffer.
+		// TODO: try to avoid memmoving too much. Circular buffer?
+		uint32_t left = seqdiff(c->snd.nxt, hdr.ack);
+		if(left)
+			memmove(c->sndbuf, c->sndbuf + advanced, left);
 	}
 
+	// 4. Update timers
+
+	if(advanced) {
+		timerclear(&c->conn_timeout); // It should be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
+		if(c->snd.una == c->snd.nxt)
+			timerclear(&c->rtrx_timeout);
+	}
+
+	// 5. Process SYN stuff
+
+	if(hdr.ctl & SYN) {
+		switch(c->state) {
+		case SYN_SENT:
+			// This is a SYNACK. It should always have ACKed the SYN.
+			if(!advanced)
+				goto reset;
+			c->rcv.irs = hdr.seq;
+			c->rcv.nxt = hdr.seq;
+			set_state(c, ESTABLISHED);
+			// TODO: notify application of this somehow.
+			break;
+		case SYN_RECEIVED:
+		case ESTABLISHED:
+		case FIN_WAIT_1:
+		case FIN_WAIT_2:
+		case CLOSE_WAIT:
+		case CLOSING:
+		case LAST_ACK:
+		case TIME_WAIT:
+			// Ehm, no. We should never receive a second SYN.
+			goto reset;
+		default:
+			abort();
+		}
+
+		// SYN counts as one sequence number
+		c->rcv.nxt++;
+	}
+
+	// 6. Process new data
+
+	if(c->state == SYN_RECEIVED) {
+		// This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
+		if(!advanced)
+			goto reset;
+
+		// Are we still LISTENing?
+		if(utcp->accept)
+			utcp->accept(c, c->src);
+
+		if(c->state != ESTABLISHED) {
+			set_state(c, CLOSED);
+			c->reapable = true;
+			goto reset;
+		}
+	}
+
+	if(len) {
+		switch(c->state) {
+		case SYN_SENT:
+		case SYN_RECEIVED:
+			// This should never happen.
+			abort();
+		case ESTABLISHED:
+		case FIN_WAIT_1:
+		case FIN_WAIT_2:
+			break;
+		case CLOSE_WAIT:
+		case CLOSING:
+		case LAST_ACK:
+		case TIME_WAIT:
+			// Ehm no, We should never receive more data after a FIN.
+			goto reset;
+		default:
+			abort();
+		}
+
+		int rxd;
+
+		if(c->recv) {
+			rxd = c->recv(c, data, len);
+			if(rxd < 0)
+				rxd = 0;
+			else if(rxd > len)
+				rxd = len; // Bad application, bad!
+		} else {
+			rxd = len;
+		}
+
+		c->rcv.nxt += len;
+	}
+
+	// 7. Process FIN stuff
+
+	if(hdr.ctl & FIN) {
+		switch(c->state) {
+		case SYN_SENT:
+		case SYN_RECEIVED:
+			// This should never happen.
+			abort();
+		case ESTABLISHED:
+			set_state(c, CLOSE_WAIT);
+			break;
+		case FIN_WAIT_1:
+			set_state(c, CLOSING);
+			break;
+		case FIN_WAIT_2:
+			set_state(c, TIME_WAIT);
+			break;
+		case CLOSE_WAIT:
+		case CLOSING:
+		case LAST_ACK:
+		case TIME_WAIT:
+			// Ehm, no. We should never receive a second FIN.
+			goto reset;
+		default:
+			abort();
+		}
+
+		// FIN counts as one sequence number
+		c->rcv.nxt++;
+
+		// Inform the application that the peer closed the connection.
+		if(c->recv) {
+			errno = 0;
+			c->recv(c, NULL, 0);
+		}
+	}
+
+	if(!len && !advanced)
+		return 0;
+
+	if(!len && !(hdr.ctl & SYN) && !(hdr.ctl & FIN))
+		return 0;
+
+ack:
+	hdr.src = c->src;
+	hdr.dst = c->dst;
+	hdr.seq = c->snd.nxt;
+	hdr.ack = c->rcv.nxt;
+	hdr.ctl = ACK;
+	print_packet(c->utcp, "send", &hdr, sizeof hdr);
+	utcp->send(utcp, &hdr, sizeof hdr);
 	return 0;
 
 reset:
@@ -709,26 +780,14 @@ reset:
 		hdr.seq = 0;
 		hdr.ctl = RST | ACK;
 	}
-	print_packet(c->utcp, "send", &hdr, sizeof hdr);
+	print_packet(utcp, "send", &hdr, sizeof hdr);
 	utcp->send(utcp, &hdr, sizeof hdr);
 	return 0;
 
-ack_and_drop:
-	swap_ports(&hdr);
-	hdr.seq = c->snd.nxt;
-	hdr.ack = c->rcv.nxt;
-	hdr.ctl = ACK;
-	print_packet(c->utcp, "send", &hdr, sizeof hdr);
-	utcp->send(utcp, &hdr, sizeof hdr);
-	if(c->state == CLOSE_WAIT || c->state == TIME_WAIT) {
-		errno = 0;
-		if(c->recv)
-			c->recv(c, NULL, 0);
-	}
-	return 0;
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
+	fprintf(stderr, "%p shutdown %d\n", c->utcp, dir);
 	if(!c) {
 		errno = EFAULT;
 		return -1;
@@ -758,7 +817,7 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	case FIN_WAIT_2:
 		return 0;
 	case CLOSE_WAIT:
-		set_state(c, LAST_ACK);
+		set_state(c, CLOSING);
 		break;
 
 	case CLOSING:
