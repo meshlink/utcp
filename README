@@ -24,7 +24,7 @@ TODO v1.0:
 
 TODO v2.0:
 
-* Nagle
+* Nagle (add PSH back to signal receiver that now we want an immediate ACK?)
 * NAK and SACK
 * Congestion window scaling
 * Timestamps?
@@ -43,3 +43,83 @@ Fast transaction:
 	ACK ->
 
 Does this need special care or can we rely on higher level MACs?
+
+INVARIANTS
+----------
+
+- snd.una: the sequence number of the first byte we did not receive an ACK for
+- snd.nxt: the sequence number of the first byte after the last one we ever sent
+- snd.wnd: the number of bytes we have left in our (UTCP/application?) input buffer
+
+- rcv.nxt: the sequence number of the first byte after the last one we passed up to the application
+- rcv.wnd: the number of bytes the receives has left in its input buffer (may be more/less than our send buffer size)
+
+- The only packets that do not have ACK set must either have SYN or RST set
+- Only packets received with rcv.nxt <= hdr.seq <= rcv.nxt + rcv.wnd are valid, drop others.
+- If it has ACK set, and it's higher than snd.una, update snd.una.
+  But don't update it past c->snd.next. (RST in that case?)
+
+- SYN and FIN each count as one byte for the sequence numbering, but no actual byte is transferred in the payload.
+
+STATES
+------
+
+CLOSED: this connection is cloed, all packets received will result in RST.
+
+LISTEN: (= no connection yet): only allow SYN packets, it application does not accept, return RST|ACK, else SYN|ACK.
+
+SYN_SENT: we sent a SYN, now expecting SYN|ACK
+
+SYN_RECEIVED: we received a SYN, sent back a SYN|ACK, now expecting an ACK
+
+ESTABLISHED: SYN is acked, we can now send/receive normal data.
+
+FIN_WAIT_1: we want to close the connection, and just sent a FIN, waiting for it to be ACKed.
+
+FIN_WAIT_2: FIXME
+
+CLOSE_WAIT: we received a FIN, we sent back an ACK
+
+CLOSING: we had already sent a FIN, and we received a FIN back, now waiting for it to be ACKed.
+
+LAST_ACK: we are waiting for the last ACK before we can CLOSE
+
+TIME_WAIT: connection is in princple closed, but our last ACK might not have been received, so just wait a while to see if a FIN gets retransmitted so we can resend the ACK.
+
+SEND PACKET
+-----------
+
+- Put the packet in the send buffer.
+- Decide how much to send:
+  - Not more than receive window allows
+  - Not more that congestion window allows
+- Segmentize and send the packets
+- At the end, snd.nxt is advanced with the number of bytes sent
+- Set the rtrx and conn timers if they have not been set
+
+RETRANSMIT
+----------
+
+- Decide how much to send:
+  - Not more than we have in the send buffer
+  - Not more than receive window allows
+  - Not more that congestion window allows
+- Segmentize and send packets
+- No advancement of sequence numbers happen
+- Reset the rtrx timers
+
+RECEIVE PACKET
+--------------
+
+- Drop invalid packets:
+  - Invalid flags or state
+  - hdr.seq not within our receive window
+  - hdr.ack ahead of snd.nxt
+- Handle RST packets
+- Advance snd.una?
+  - reset conn timer if so
+  - remove ACKed data from send buffer
+- If snd.una == snd.nxt, clear rtrx and conn timer
+- Process state changes due to SYN
+- Send new data to application
+- Process state changes due to FIN
