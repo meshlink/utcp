@@ -954,12 +954,19 @@ static void retransmit(struct utcp_connection *c) {
 			break;
 
 		case ESTABLISHED:
+		case FIN_WAIT_1:
 			pkt.hdr.seq = c->snd.una;
 			pkt.hdr.ack = c->rcv.nxt;
 			pkt.hdr.ctl = ACK;
 			uint32_t len = seqdiff(c->snd.nxt, c->snd.una);
+			if(c->state == FIN_WAIT_1)
+				len--;
 			if(len > utcp->mtu)
 				len = utcp->mtu;
+			else {
+				if(c->state == FIN_WAIT_1)
+					pkt.hdr.ctl |= FIN;
+			}
 			memcpy(pkt.data, c->sndbuf, len);
 			print_packet(c->utcp, "rtrx", &pkt, sizeof pkt.hdr + len);
 			utcp->send(utcp, &pkt, sizeof pkt.hdr + len);
