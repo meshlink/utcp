@@ -30,6 +30,9 @@
 #define FIN 4
 #define RST 8
 
+#define DEFAULT_SNDBUFSIZE 4096
+#define DEFAULT_MAXSNDBUFSIZE 131072
+
 struct hdr {
 	uint16_t src; // Source port
 	uint16_t dst; // Destination port
@@ -73,6 +76,9 @@ struct utcp_connection {
 	struct utcp *utcp;
 	bool reapable;
 
+	bool nodelay;
+	bool keepalive;
+
 	uint16_t src;
 	uint16_t dst;
 	enum state state;
@@ -99,6 +105,7 @@ struct utcp_connection {
 
 	char *sndbuf;
 	uint32_t sndbufsize;
+	uint32_t maxsndbufsize;
 };
 
 struct utcp {

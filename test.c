@@ -86,7 +86,7 @@ int main(int argc, char *argv[]) {
 	if(!u)
 		return 1;
 
-	utcp_set_connection_timeout(u, 10);
+	utcp_set_user_timeout(u, 10);
 
 	if(!server)
 		c = utcp_connect(u, 1, do_recv, NULL);

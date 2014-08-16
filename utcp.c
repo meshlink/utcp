@@ -73,6 +73,10 @@ static inline void list_connections(struct utcp *utcp) {
 		fprintf(stderr, "  %u -> %u state %s\n", utcp->connections[i]->src, utcp->connections[i]->dst, strstate[utcp->connections[i]->state]);
 }
 
+static int32_t seqdiff(uint32_t a, uint32_t b) {
+	return a - b;
+}
+
 // Connections are stored in a sorted list.
 // This gives O(log(N)) lookup time, O(N log(N)) insertion time and O(N) deletion time.
 
@@ -138,16 +142,20 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 		else
 			utcp->nallocated *= 2;
 		struct utcp_connection **new_array = realloc(utcp->connections, utcp->nallocated * sizeof *utcp->connections);
-		if(!new_array) {
-			errno = ENOMEM;
+		if(!new_array)
 			return NULL;
-		}
 		utcp->connections = new_array;
 	}
 
 	struct utcp_connection *c = calloc(1, sizeof *c);
-	if(!c) {
-		errno = ENOMEM;
+	if(!c)
+		return NULL;
+
+	c->sndbufsize = DEFAULT_SNDBUFSIZE;
+	c->maxsndbufsize = DEFAULT_MAXSNDBUFSIZE;
+	c->sndbuf = malloc(c->sndbufsize);
+	if(!c->sndbuf) {
+		free(c);
 		return NULL;
 	}
 
@@ -160,10 +168,6 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	c->snd.nxt = c->snd.iss + 1;
 	c->rcv.wnd = utcp->mtu;
 	c->utcp = utcp;
-	c->sndbufsize = 65536;
-	c->sndbuf = malloc(c->sndbufsize);
-	if(!c->sndbuf)
-		c->sndbufsize = 0;
 
 	// Add it to the sorted list of connections
 
@@ -250,16 +254,19 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		return -1;
 	}
 
-	uint32_t bufused = c->snd.nxt - c->snd.una;
+	uint32_t bufused = seqdiff(c->snd.nxt, c->snd.una);
 
 	/* Check our send buffer.
 	 * - If it's big enough, just put the data in there.
-	 * - If not, decide whether to enlarge. (TODO, now we just always enlarge)
+	 * - If not, decide whether to enlarge if possible.
 	 * - Cap len so it doesn't overflow our buffer.
 	 */
 
-	if(len > c->sndbufsize - bufused) {
-		c->sndbufsize *= 2;
+	if(len > c->sndbufsize - bufused && c->sndbufsize < c->maxsndbufsize) {
+		if(c->sndbufsize > c->maxsndbufsize / 2)
+			c->sndbufsize = c->maxsndbufsize;
+		else
+			c->sndbufsize *= 2;
 		c->sndbuf = realloc(c->sndbuf, c->sndbufsize);
 	}
 
@@ -310,10 +317,6 @@ static void swap_ports(struct hdr *hdr) {
 	uint16_t tmp = hdr->src;
 	hdr->src = hdr->dst;
 	hdr->dst = tmp;
-}
-
-static int32_t seqdiff(uint32_t a, uint32_t b) {
-	return a - b;
 }
 
 int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
@@ -970,13 +973,49 @@ void utcp_exit(struct utcp *utcp) {
 	free(utcp);
 }
 
+uint16_t utcp_get_mtu(struct utcp *utcp) {
+	return utcp->mtu;
+}
+
 void utcp_set_mtu(struct utcp *utcp, uint16_t mtu) {
 	// TODO: handle overhead of the header
 	utcp->mtu = mtu;
 }
 
-int utcp_set_connection_timeout(struct utcp *u, int timeout) {
-	int prev = u->timeout;
+int utcp_get_user_timeout(struct utcp *u) {
+	return u->timeout;
+}
+
+void utcp_set_user_timeout(struct utcp *u, int timeout) {
 	u->timeout = timeout;
-	return prev;
+}
+
+size_t utcp_get_sndbuf(struct utcp_connection *c) {
+	return c->maxsndbufsize;
+}
+
+void utcp_set_sndbuf(struct utcp_connection *c, size_t size) {
+	c->maxsndbufsize = size;
+	if(c->maxsndbufsize != size)
+		c->maxsndbufsize = -1;
+}
+
+bool utcp_get_nodelay(struct utcp_connection *c) {
+	return c->nodelay;
+}
+
+void utcp_set_nodelay(struct utcp_connection *c, bool nodelay) {
+	c->nodelay = nodelay;
+}
+
+bool utcp_get_keepalive(struct utcp_connection *c) {
+	return c->keepalive;
+}
+
+void utcp_set_keepalive(struct utcp_connection *c, bool keepalive) {
+	c->keepalive = keepalive;
+}
+
+size_t utcp_get_outq(struct utcp_connection *c) {
+	return seqdiff(c->snd.nxt, c->snd.una);
 }
