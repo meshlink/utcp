@@ -346,10 +346,26 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
 	uint32_t bufused = c->snd.nxt - c->snd.una;
 
+	/* Check our send buffer.
+	 * - If it's big enough, just put the data in there.
+	 * - If not, decide whether to enlarge. (TODO, now we just always enlarge)
+	 * - Cap len so it doesn't overflow our buffer.
+	 */
+
+	if(len > c->sndbufsize - bufused) {
+		c->sndbufsize *= 2;
+		c->sndbuf = realloc(c->sndbuf, c->sndbufsize);
+	}
+
 	if(len > c->sndbufsize - bufused)
 		len = c->sndbufsize - bufused;
 
-	memcpy(c->sndbuf + (c->snd.nxt - c->snd.una), data, len);
+	if(!len) {
+		errno == EWOULDBLOCK;
+		return 0;
+	}
+
+	memcpy(c->sndbuf + bufused, data, len);
 
 	// Send segments
 
