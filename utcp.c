@@ -1064,6 +1064,11 @@ void utcp_exit(struct utcp *utcp) {
 	free(utcp);
 }
 
+void utcp_set_mtu(struct utcp *utcp, uint16_t mtu) {
+	// TODO: handle overhead of the header
+	utcp->mtu = mtu;
+}
+
 int utcp_set_connection_timeout(struct utcp *u, int timeout) {
 	int prev = u->timeout;
 	u->timeout = timeout;
