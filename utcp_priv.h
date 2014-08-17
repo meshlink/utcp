@@ -74,22 +74,27 @@ static const char *strstate[] __attribute__((unused)) = {
 struct utcp_connection {
 	void *priv;
 	struct utcp *utcp;
+
 	bool reapable;
 
-	bool nodelay;
-	bool keepalive;
+	// Callbacks
+
+	utcp_recv_t recv;
+
+	// TCP State
 
 	uint16_t src;
 	uint16_t dst;
 	enum state state;
-
-	// The following two structures form the TCB
 
 	struct {
 		uint32_t una;
 		uint32_t nxt;
 		uint32_t wnd;
 		uint32_t iss;
+
+		uint32_t last;
+		uint32_t cwnd;
 	} snd;
 
 	struct {
@@ -98,25 +103,46 @@ struct utcp_connection {
 		uint32_t irs;
 	} rcv;
 
-	utcp_recv_t recv;
+	int dupack;
+
+	// Timers
 
 	struct timeval conn_timeout;
 	struct timeval rtrx_timeout;
 
+	// Send buffer
+
 	char *sndbuf;
+	uint32_t sndbufused;
 	uint32_t sndbufsize;
 	uint32_t maxsndbufsize;
+
+	// Per-socket options
+
+	bool nodelay;
+	bool keepalive;
+
+	// Congestion avoidance state
+
+	struct timeval tlast;
+	uint64_t bandwidth;
 };
 
 struct utcp {
 	void *priv;
 
+	// Callbacks
+
 	utcp_accept_t accept;
 	utcp_pre_accept_t pre_accept;
 	utcp_send_t send;
 
+	// Global socket options
+
 	uint16_t mtu;
 	int timeout;
+
+	// Connection management
 
 	struct utcp_connection **connections;
 	int nconnections;

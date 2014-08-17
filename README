@@ -191,3 +191,44 @@ RECEIVE PACKET
 - Process state changes due to SYN
 - Send new data to application
 - Process state changes due to FIN
+
+CONGESTION AVOIDANCE
+--------------------
+
+We want to send as much packets as possible that won't cause any packets to be
+dropped.  So we should not send more than the available bandwidth, and not more
+in one go than buffers along the path can handle.
+
+To start, we use "self-clocking". We send one packet, and wait for an ACK
+before sending another packet. On a network with a finite bandwidth but zero
+delay (latency), this will send packets as efficiently as possible. We don't
+need any timers to control the outgoing packet rate, that's why we call this
+self-clocked. However, latency is non-zero, and this means a number of packets
+is always on the way between the sender and receiver. The amount of packets
+"inbetween" is in principle the bandwidth times the delay (bandwidth-delay
+product, or BDP).
+
+Delay is fairly easy to measure (equal to half the round-trip time of a packet,
+which in TCP is easily obtained from the SYN and SYNACK pair, or the ACK in
+response of a segment), however bandwidth is more difficult and might change
+more rapidly than the latency.
+
+Back to the "inbetween" packets: ideally we would like to fill the available
+inbetween space completely. It should be easy to see that in that case,
+self-clocking will still work as intended. Our estimate of the amount of
+packets in the inbetween space is called the congestion window (CWND).  If we
+know the BDP, we can set the CWND to it, however if we don't know it, we can
+start with a small CWND and gradually increase it (for example, every time we
+receive an ACK, send the next 2 segments). At some point, we will start sending
+at a higher rate than the available bandwidth, in which case packets will
+inevitably be lost. We detect that because we do not receive an ACK for our
+data, and then we have to reduce the CWND (for example, by half).
+
+The trick is to choose an algorithm that best keeps the CWND to the effective
+BDP.
+
+A nice introduction is RFC 2001.
+
+snd.cwnd: size of the congestion window.
+snd.nxt - snd.una: number of unacknowledged bytes, = number of bytes in flight.
+snd.cwnd - (snd.nxt - snd.una): unused size of congestion window

@@ -181,6 +181,8 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	c->snd.una = c->snd.iss;
 	c->snd.nxt = c->snd.iss + 1;
 	c->rcv.wnd = utcp->mtu;
+	c->snd.last = c->snd.nxt;
+	c->snd.cwnd = utcp->mtu;
 	c->utcp = utcp;
 
 	// Add it to the sorted list of connections
@@ -230,6 +232,46 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 	set_state(c, ESTABLISHED);
 }
 
+static void ack(struct utcp_connection *c, bool sendatleastone) {
+	uint32_t left = seqdiff(c->snd.last, c->snd.nxt);
+	int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
+	char *data = c->sndbuf + seqdiff(c->snd.nxt, c->snd.una);
+
+	if(cwndleft <= 0)
+		cwndleft = 0;
+
+	if(cwndleft < left)
+		left = cwndleft;
+
+	if(!left && !sendatleastone)
+		return;
+
+	struct {
+		struct hdr hdr;
+		char data[c->utcp->mtu];
+	} pkt;
+
+	pkt.hdr.src = c->src;
+	pkt.hdr.dst = c->dst;
+	pkt.hdr.ack = c->rcv.nxt;
+	pkt.hdr.wnd = c->snd.wnd;
+	pkt.hdr.ctl = ACK;
+
+	do {
+		uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
+		pkt.hdr.seq = c->snd.nxt;
+
+		memcpy(pkt.data, data, seglen);
+
+		c->snd.nxt += seglen;
+		data += seglen;
+		left -= seglen;
+
+		print_packet(c->utcp, "send", &pkt, sizeof pkt.hdr + seglen);
+		c->utcp->send(c->utcp, &pkt, sizeof pkt.hdr + seglen);
+	} while(left);
+}
+
 ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	if(c->reapable) {
 		debug("Error: send() called on closed connection %p\n", c);
@@ -277,11 +319,16 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	 */
 
 	if(len > c->sndbufsize - bufused && c->sndbufsize < c->maxsndbufsize) {
+		uint32_t newbufsize;
 		if(c->sndbufsize > c->maxsndbufsize / 2)
-			c->sndbufsize = c->maxsndbufsize;
+			newbufsize = c->maxsndbufsize;
 		else
-			c->sndbufsize *= 2;
-		c->sndbuf = realloc(c->sndbuf, c->sndbufsize);
+			newbufsize = c->sndbufsize * 2;
+		char *newbuf = realloc(c->sndbuf, newbufsize);
+		if(newbuf) {
+			c->sndbuf = newbuf;
+			c->sndbufsize = newbufsize;
+		}
 	}
 
 	if(len > c->sndbufsize - bufused)
@@ -293,37 +340,9 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	}
 
 	memcpy(c->sndbuf + bufused, data, len);
+	c->snd.last += len;
 
-	// Send segments
-
-	struct {
-		struct hdr hdr;
-		char data[c->utcp->mtu];
-	} pkt;
-
-	pkt.hdr.src = c->src;
-	pkt.hdr.dst = c->dst;
-	pkt.hdr.ack = c->rcv.nxt;
-	pkt.hdr.wnd = c->snd.wnd;
-	pkt.hdr.ctl = ACK;
-
-	uint32_t left = len;
-
-	while(left) {
-		uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
-		pkt.hdr.seq = c->snd.nxt;
-
-		memcpy(pkt.data, data, seglen);
-
-		c->snd.nxt += seglen;
-		data += seglen;
-		left -= seglen;
-
-		print_packet(c->utcp, "send", &pkt, sizeof pkt.hdr + seglen);
-		c->utcp->send(c->utcp, &pkt, sizeof pkt.hdr + seglen);
-	}
-
-	fprintf(stderr, "len=%zu\n", len);
+	ack(c, false);
 	return len;
 }
 
@@ -561,6 +580,18 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		uint32_t left = seqdiff(c->snd.nxt, hdr.ack);
 		if(left)
 			memmove(c->sndbuf, c->sndbuf + advanced, left);
+		c->dupack = 0;
+		c->snd.cwnd += utcp->mtu;
+		if(c->snd.cwnd > c->maxsndbufsize)
+			c->snd.cwnd = c->maxsndbufsize;
+	} else {
+		if(!len) {
+			c->dupack++;
+			if(c->dupack >= 3) {
+				debug("Triplicate ACK\n");
+				abort();
+			}
+		}
 	}
 
 	// 4. Update timers
@@ -699,13 +730,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return 0;
 
 ack:
-	hdr.src = c->src;
-	hdr.dst = c->dst;
-	hdr.seq = c->snd.nxt;
-	hdr.ack = c->rcv.nxt;
-	hdr.ctl = ACK;
-	print_packet(c->utcp, "send", &hdr, sizeof hdr);
-	utcp->send(utcp, &hdr, sizeof hdr);
+	ack(c, true);
 	return 0;
 
 reset:
