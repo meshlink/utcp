@@ -5,9 +5,11 @@ BIN = selftest test
 
 all: $(BIN)
 
-test: utcp.c test.c
+utcp.o: utcp.c utcp.h utcp_priv.h
 
-selftest: utcp.c selftest.c
+test: utcp.o test.c
+
+selftest: utcp.o selftest.c
 
 clean:
 	rm -f *.o $(BIN)
