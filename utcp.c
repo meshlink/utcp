@@ -31,46 +31,60 @@
 
 #include "utcp_priv.h"
 
-static void set_state(struct utcp_connection *c, enum state state) {
-	c->state = state;
-	if(state == ESTABLISHED)
-		timerclear(&c->conn_timeout);
-	fprintf(stderr, "%p new state: %s\n", c->utcp, strstate[state]);
+#ifdef UTCP_DEBUG
+#include <stdarg.h>
+
+static void debug(const char *format, ...) {
+	va_list ap;
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
 }
 
 static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, size_t len) {
 	struct hdr hdr;
 	if(len < sizeof hdr) {
-		fprintf(stderr, "%p %s: short packet (%zu bytes)\n", utcp, dir, len);
+		debug("%p %s: short packet (%zu bytes)\n", utcp, dir, len);
 		return;
 	}
 
 	memcpy(&hdr, pkt, sizeof hdr);
 	fprintf (stderr, "%p %s: src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
 	if(hdr.ctl & SYN)
-		fprintf(stderr, "SYN");
+		debug("SYN");
 	if(hdr.ctl & RST)
-		fprintf(stderr, "RST");
+		debug("RST");
 	if(hdr.ctl & FIN)
-		fprintf(stderr, "FIN");
+		debug("FIN");
 	if(hdr.ctl & ACK)
-		fprintf(stderr, "ACK");
+		debug("ACK");
 
 	if(len > sizeof hdr) {
-		fprintf(stderr, " data=");
+		debug(" data=");
 		for(int i = sizeof hdr; i < len; i++) {
 			const char *data = pkt;
-			fprintf(stderr, "%c", data[i] >= 32 ? data[i] : '.');
+			debug("%c", data[i] >= 32 ? data[i] : '.');
 		}
 	}
 
-	fprintf(stderr, "\n");
+	debug("\n");
+}
+#else
+#define debug(...)
+#define print_packet(...)
+#endif
+
+static void set_state(struct utcp_connection *c, enum state state) {
+	c->state = state;
+	if(state == ESTABLISHED)
+		timerclear(&c->conn_timeout);
+	debug("%p new state: %s\n", c->utcp, strstate[state]);
 }
 
 static inline void list_connections(struct utcp *utcp) {
-	fprintf(stderr, "%p has %d connections:\n", utcp, utcp->nconnections);
+	debug("%p has %d connections:\n", utcp, utcp->nconnections);
 	for(int i = 0; i < utcp->nconnections; i++)
-		fprintf(stderr, "  %u -> %u state %s\n", utcp->connections[i]->src, utcp->connections[i]->dst, strstate[utcp->connections[i]->state]);
+		debug("  %u -> %u state %s\n", utcp->connections[i]->src, utcp->connections[i]->dst, strstate[utcp->connections[i]->state]);
 }
 
 static int32_t seqdiff(uint32_t a, uint32_t b) {
@@ -206,11 +220,11 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
 
 void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 	if(c->reapable || c->state != SYN_RECEIVED) {
-		fprintf(stderr, "Error: accept() called on invalid connection %p in state %s\n", c, strstate[c->state]);
+		debug("Error: accept() called on invalid connection %p in state %s\n", c, strstate[c->state]);
 		return;
 	}
 
-	fprintf(stderr, "%p accepted, %p %p\n", c, recv, priv);
+	debug("%p accepted, %p %p\n", c, recv, priv);
 	c->recv = recv;
 	c->priv = priv;
 	set_state(c, ESTABLISHED);
@@ -218,7 +232,7 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 
 ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	if(c->reapable) {
-		fprintf(stderr, "Error: send() called on closed connection %p\n", c);
+		debug("Error: send() called on closed connection %p\n", c);
 		errno = EBADF;
 		return -1;
 	}
@@ -228,7 +242,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	case LISTEN:
 	case SYN_SENT:
 	case SYN_RECEIVED:
-		fprintf(stderr, "Error: send() called on unconnected connection %p\n", c);
+		debug("Error: send() called on unconnected connection %p\n", c);
 		errno = ENOTCONN;
 		return -1;
 	case ESTABLISHED:
@@ -239,7 +253,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	case CLOSING:
 	case LAST_ACK:
 	case TIME_WAIT:
-		fprintf(stderr, "Error: send() called on closing connection %p\n", c);
+		debug("Error: send() called on closing connection %p\n", c);
 		errno = EPIPE;
 		return -1;
 	}
@@ -406,7 +420,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return 0;
 	}
 
-	fprintf(stderr, "%p state %s\n", c->utcp, strstate[c->state]);
+	debug("%p state %s\n", c->utcp, strstate[c->state]);
 
 	// In case this is for a CLOSED connection, ignore the packet.
 	// TODO: make it so incoming packets can never match a CLOSED connection.
@@ -464,7 +478,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 #endif
 
 	if(!acceptable) {
-		fprintf(stderr, "Packet not acceptable, %u  <= %u + %zu < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
+		debug("Packet not acceptable, %u  <= %u + %zu < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
 		// Ignore unacceptable RST packets.
 		if(hdr.ctl & RST)
 			return 0;
@@ -478,7 +492,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// ackno should not roll back, and it should also not be bigger than snd.nxt.
 
 	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.nxt) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
-		fprintf(stderr, "Packet ack seqno out of range, %u %u %u\n", hdr.ack, c->snd.una, c->snd.nxt);
+		debug("Packet ack seqno out of range, %u %u %u\n", hdr.ack, c->snd.una, c->snd.nxt);
 		// Ignore unacceptable RST packets.
 		if(hdr.ctl & RST)
 			return 0;
@@ -541,7 +555,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	c->snd.una = hdr.ack;
 
 	if(advanced) {
-		fprintf(stderr, "%p advanced %u\n", utcp, advanced);
+		debug("%p advanced %u\n", utcp, advanced);
 		// Make room in the send buffer.
 		// TODO: try to avoid memmoving too much. Circular buffer?
 		uint32_t left = seqdiff(c->snd.nxt, hdr.ack);
@@ -712,14 +726,14 @@ reset:
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
-	fprintf(stderr, "%p shutdown %d\n", c->utcp, dir);
+	debug("%p shutdown %d\n", c->utcp, dir);
 	if(!c) {
 		errno = EFAULT;
 		return -1;
 	}
 
 	if(c->reapable) {
-		fprintf(stderr, "Error: shutdown() called on closed connection %p\n", c);
+		debug("Error: shutdown() called on closed connection %p\n", c);
 		errno = EBADF;
 		return -1;
 	}
@@ -783,7 +797,7 @@ int utcp_abort(struct utcp_connection *c) {
 	}
 
 	if(c->reapable) {
-		fprintf(stderr, "Error: abort() called on closed connection %p\n", c);
+		debug("Error: abort() called on closed connection %p\n", c);
 		errno = EBADF;
 		return -1;
 	}
@@ -905,7 +919,7 @@ int utcp_timeout(struct utcp *utcp) {
 
 		if(c->state == CLOSED) {
 			if(c->reapable) {
-				fprintf(stderr, "Reaping %p\n", c);
+				debug("Reaping %p\n", c);
 				free_connection(c);
 				i--;
 			}

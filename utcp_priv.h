@@ -57,7 +57,7 @@ enum state {
 	TIME_WAIT
 };
 
-static const char *strstate[] = {
+static const char *strstate[] __attribute__((unused)) = {
 	[CLOSED] = "CLOSED",
 	[LISTEN] = "LISTEN",
 	[SYN_SENT] = "SYN_SENT",
