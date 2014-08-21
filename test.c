@@ -82,6 +82,8 @@ int main(int argc, char *argv[]) {
 		connected = true;
 	}
 
+	freeaddrinfo(ai);
+
 	struct utcp *u = utcp_init(server ? do_accept : NULL, NULL, do_send, &s);
 	if(!u)
 		return 1;
@@ -120,7 +122,7 @@ int main(int argc, char *argv[]) {
 
 		if(fds[1].revents) {
 			struct sockaddr_storage ss;
-			socklen_t sl;
+			socklen_t sl = sizeof ss;
 			int len = recvfrom(s, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&ss, &sl);
 			if(len <= 0)
 				break;

@@ -114,6 +114,8 @@ int main(int argc, char *argv[]) {
 	fprintf(stderr, "closing...\n");
 	utcp_close(c);
 
+	utcp_exit(a);
+	utcp_exit(b);
 
 	return 0;
 }

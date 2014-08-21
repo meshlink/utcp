@@ -127,6 +127,7 @@ static void free_connection(struct utcp_connection *c) {
 	memmove(cp + i, cp + i + 1, (utcp->nconnections - i - 1) * sizeof *cp);
 	utcp->nconnections--;
 
+	free(c->sndbuf);
 	free(c);
 }
 
@@ -206,8 +207,9 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
 	hdr.dst = c->dst;
 	hdr.seq = c->snd.iss;
 	hdr.ack = 0;
-	hdr.ctl = SYN;
 	hdr.wnd = c->rcv.wnd;
+	hdr.ctl = SYN;
+	hdr.aux = 0;
 
 	set_state(c, SYN_SENT);
 
@@ -260,6 +262,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 	pkt.hdr.ack = c->rcv.nxt;
 	pkt.hdr.wnd = c->snd.wnd;
 	pkt.hdr.ctl = ACK;
+	pkt.hdr.aux = 0;
 
 	do {
 		uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
@@ -757,6 +760,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 		// FIN counts as one sequence number
 		c->rcv.nxt++;
+		len++;
 
 		// Inform the application that the peer closed the connection.
 		if(c->recv) {
@@ -1037,8 +1041,13 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 void utcp_exit(struct utcp *utcp) {
 	if(!utcp)
 		return;
-	for(int i = 0; i < utcp->nconnections; i++)
-		free_connection(utcp->connections[i]);
+	for(int i = 0; i < utcp->nconnections; i++) {
+		if(!utcp->connections[i]->reapable)
+			debug("Warning, freeing unclosed connection %p\n", utcp->connections[i]);
+		free(utcp->connections[i]->sndbuf);
+		free(utcp->connections[i]);
+	}
+	free(utcp->connections);
 	free(utcp);
 }
 
