@@ -233,9 +233,13 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 }
 
 static void ack(struct utcp_connection *c, bool sendatleastone) {
-	uint32_t left = seqdiff(c->snd.last, c->snd.nxt);
+	int32_t left = seqdiff(c->snd.last, c->snd.nxt);
 	int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
 	char *data = c->sndbuf + seqdiff(c->snd.nxt, c->snd.una);
+
+	fprintf(stderr, "ack, left=%d, cwndleft=%d, sendatleastone=%d\n", left, cwndleft, sendatleastone);
+	if(left < 0)
+		abort();
 
 	if(cwndleft <= 0)
 		cwndleft = 0;
@@ -266,6 +270,18 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 		c->snd.nxt += seglen;
 		data += seglen;
 		left -= seglen;
+
+		if(c->state != ESTABLISHED && !left && seglen) {
+			switch(c->state) {
+			case FIN_WAIT_1:
+			case CLOSING:
+				seglen--;
+				pkt.hdr.ctl |= FIN;
+				break;
+			default:
+				break;
+			}
+		}
 
 		print_packet(c->utcp, "send", &pkt, sizeof pkt.hdr + seglen);
 		c->utcp->send(c->utcp, &pkt, sizeof pkt.hdr + seglen);
@@ -324,6 +340,12 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 			newbufsize = c->maxsndbufsize;
 		else
 			newbufsize = c->sndbufsize * 2;
+		if(bufused + len > newbufsize) {
+			if(bufused + len > c->maxsndbufsize)
+				newbufsize = c->maxsndbufsize;
+			else
+				newbufsize = bufused + len;
+		}
 		char *newbuf = realloc(c->sndbuf, newbufsize);
 		if(newbuf) {
 			c->sndbuf = newbuf;
@@ -584,6 +606,24 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		c->snd.cwnd += utcp->mtu;
 		if(c->snd.cwnd > c->maxsndbufsize)
 			c->snd.cwnd = c->maxsndbufsize;
+		debug("%p increasing cwnd to %u\n", utcp, c->snd.cwnd);
+
+		// Check if we have sent a FIN that is now ACKed.
+		switch(c->state) {
+		case FIN_WAIT_1:
+			if(c->snd.una == c->snd.last)
+				set_state(c, FIN_WAIT_2);
+			break;
+		case CLOSING:
+			if(c->snd.una == c->snd.last) {
+				gettimeofday(&c->conn_timeout, NULL);
+				c->conn_timeout.tv_sec += 60;
+				set_state(c, TIME_WAIT);
+			}
+			break;
+		default:
+			break;
+		}
 	} else {
 		if(!len) {
 			c->dupack++;
@@ -701,6 +741,8 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			set_state(c, CLOSING);
 			break;
 		case FIN_WAIT_2:
+			gettimeofday(&c->conn_timeout, NULL);
+			c->conn_timeout.tv_sec += 60;
 			set_state(c, TIME_WAIT);
 			break;
 		case CLOSE_WAIT:
@@ -790,21 +832,9 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 		return 0;
 	}
 
-	// Send FIN
+	c->snd.last++;
 
-	struct hdr hdr;
-
-	hdr.src = c->src;
-	hdr.dst = c->dst;
-	hdr.seq = c->snd.nxt;
-	hdr.ack = c->rcv.nxt;
-	hdr.wnd = c->snd.wnd;
-	hdr.ctl = FIN | ACK;
-
-	c->snd.nxt += 1;
-
-	print_packet(c->utcp, "send", &hdr, sizeof hdr);
-	c->utcp->send(c->utcp, &hdr, sizeof hdr);
+	ack(c, false);
 	return 0;
 }
 

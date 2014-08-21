@@ -101,5 +101,19 @@ int main(int argc, char *argv[]) {
 	fprintf(stderr, "closing...\n");
 	utcp_close(c);
 
+	fprintf(stderr, "\nTesting connection with huge data transfer\n\n");
+
+	c = utcp_connect(b, 7, do_recv, NULL);
+	utcp_set_sndbuf(c, 10240);
+	char buf[20480] = "buf";
+
+	len = utcp_send(c, buf, sizeof buf);
+	if(len != 10240)
+		fprintf(stderr, "Error: utcp_send() returned %zd, expected 10240\n", len);
+
+	fprintf(stderr, "closing...\n");
+	utcp_close(c);
+
+
 	return 0;
 }
