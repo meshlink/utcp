@@ -596,20 +596,38 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// 3. Advance snd.una
 
 	uint32_t advanced = seqdiff(hdr.ack, c->snd.una);
-	c->snd.una = hdr.ack;
+	uint32_t prevrcvnxt = c->rcv.nxt;
 
 	if(advanced) {
-		debug("%p advanced %u\n", utcp, advanced);
+		int32_t data_acked = advanced;
+
+		switch(c->state) {
+			case SYN_SENT:
+			case SYN_RECEIVED:
+				data_acked--;
+				break;
+			// TODO: handle FIN as well.
+			default:
+				break;
+		}
+
+		assert(data_acked >= 0);
+
+		int32_t bufused = seqdiff(c->snd.last, c->snd.una);
+		assert(data_acked <= bufused);
+
 		// Make room in the send buffer.
 		// TODO: try to avoid memmoving too much. Circular buffer?
-		uint32_t left = seqdiff(c->snd.nxt, hdr.ack);
-		if(left)
-			memmove(c->sndbuf, c->sndbuf + advanced, left);
+		uint32_t left = bufused - data_acked;
+		if(data_acked && left)
+			memmove(c->sndbuf, c->sndbuf + data_acked, left);
+
+		c->snd.una = hdr.ack;
+
 		c->dupack = 0;
 		c->snd.cwnd += utcp->mtu;
 		if(c->snd.cwnd > c->maxsndbufsize)
 			c->snd.cwnd = c->maxsndbufsize;
-		debug("%p increasing cwnd to %u\n", utcp, c->snd.cwnd);
 
 		// Check if we have sent a FIN that is now ACKed.
 		switch(c->state) {
@@ -775,14 +793,14 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
-	if(!len && !advanced)
-		return 0;
-
-	if(!len && !(hdr.ctl & SYN) && !(hdr.ctl & FIN))
-		return 0;
+	// Now we send something back if:
+	// - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
+	//   -> sendatleastone = true
+	// - or we got an ack, so we should maybe send a bit more data
+	//   -> sendatleastone = false
 
 ack:
-	ack(c, true);
+	ack(c, prevrcvnxt != c->rcv.nxt);
 	return 0;
 
 reset:
