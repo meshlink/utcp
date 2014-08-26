@@ -113,7 +113,6 @@ struct utcp_connection {
 	// Send buffer
 
 	char *sndbuf;
-	uint32_t sndbufused;
 	uint32_t sndbufsize;
 	uint32_t maxsndbufsize;
 

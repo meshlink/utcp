@@ -19,7 +19,7 @@ bool running = true;
 double dropin;
 double dropout;
 
-int do_recv(struct utcp_connection *c, const void *data, size_t len) {
+ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 	if(!data || !len) {
 		if(errno) {
 			fprintf(stderr, "Error: %s\n", strerror(errno));
@@ -28,7 +28,7 @@ int do_recv(struct utcp_connection *c, const void *data, size_t len) {
 			dir &= ~2;
 			fprintf(stderr, "Connection closed by peer\n");
 		}
-		return 0;
+		return -1;
 	}
 	return write(1, data, len);
 }
@@ -38,12 +38,12 @@ void do_accept(struct utcp_connection *nc, uint16_t port) {
 	c = nc;
 }
 
-int do_send(struct utcp *utcp, const void *data, size_t len) {
+ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
 	if(drand48() >= dropout)
 		return send(s, data, len, MSG_DONTWAIT);
 	else
-		return 0;
+		return len;
 }
 
 int main(int argc, char *argv[]) {
@@ -88,6 +88,7 @@ int main(int argc, char *argv[]) {
 	if(!u)
 		return 1;
 
+	utcp_set_mtu(u, 1300);
 	utcp_set_user_timeout(u, 10);
 
 	if(!server)
@@ -98,7 +99,7 @@ int main(int argc, char *argv[]) {
 		{.fd = s, .events = POLLIN | POLLERR | POLLHUP},
 	};
 
-	char buf[1024];
+	char buf[102400];
 	int timeout = utcp_timeout(u);
 
 	while(dir) {

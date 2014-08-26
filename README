@@ -178,19 +178,23 @@ RETRANSMIT
 RECEIVE PACKET
 --------------
 
-- Drop invalid packets:
-  - Invalid flags or state
-  - ACK always set
-  - hdr.seq not within our receive window
-  - hdr.ack ahead of snd.nxt
-- Handle RST packets
-- Advance snd.una?
-  - reset conn timer if so
-  - remove ACKed data from send buffer
-- If snd.una == snd.nxt, clear rtrx and conn timer
-- Process state changes due to SYN
-- Send new data to application
-- Process state changes due to FIN
+1 Drop invalid packets:
+  a Invalid flags or state
+  b ACK always set
+  c hdr.seq not within our receive window
+  d hdr.ack ahead of snd.nxt or behind snd.una
+2 Handle RST packets
+3 Advance snd.una?
+  a reset conn timer if so
+  b check if our SYN or FIN has been acked
+  c check if any data been acked
+    - remove ACKed data from send buffer
+    - increase cwnd
+  d no advance? NewReno
+4 If snd.una == snd.nxt, clear rtrx and conn timer
+5 Process state changes due to SYN
+6 Send new data to application
+7 Process state changes due to FIN
 
 CONGESTION AVOIDANCE
 --------------------

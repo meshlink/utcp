@@ -19,6 +19,7 @@
 
 #define _GNU_SOURCE
 
+#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,7 +50,7 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 	}
 
 	memcpy(&hdr, pkt, sizeof hdr);
-	fprintf (stderr, "%p %s: src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
+	fprintf (stderr, "%p %s: len=%zu, src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
 	if(hdr.ctl & SYN)
 		debug("SYN");
 	if(hdr.ctl & RST)
@@ -97,8 +98,9 @@ static int32_t seqdiff(uint32_t a, uint32_t b) {
 static int compare(const void *va, const void *vb) {
 	const struct utcp_connection *a = *(struct utcp_connection **)va;
 	const struct utcp_connection *b = *(struct utcp_connection **)vb;
-	if(!a->src || !b->src)
-		abort();
+
+	assert(a->src && b->src);
+
 	int c = (int)a->src - (int)b->src;
 	if(c)
 		return c;
@@ -120,8 +122,8 @@ static struct utcp_connection *find_connection(const struct utcp *utcp, uint16_t
 static void free_connection(struct utcp_connection *c) {
 	struct utcp *utcp = c->utcp;
 	struct utcp_connection **cp = bsearch(&c, utcp->connections, utcp->nconnections, sizeof *utcp->connections, compare);
-	if(!cp)
-		abort();
+
+	assert(cp);
 
 	int i = cp - utcp->connections;
 	memmove(cp + i, cp + i + 1, (utcp->nconnections - i - 1) * sizeof *cp);
@@ -239,9 +241,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 	int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
 	char *data = c->sndbuf + seqdiff(c->snd.nxt, c->snd.una);
 
-	fprintf(stderr, "ack, left=%d, cwndleft=%d, sendatleastone=%d\n", left, cwndleft, sendatleastone);
-	if(left < 0)
-		abort();
+	assert(left >= 0);
 
 	if(cwndleft <= 0)
 		cwndleft = 0;
@@ -377,7 +377,7 @@ static void swap_ports(struct hdr *hdr) {
 	hdr->dst = tmp;
 }
 
-int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
+ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	if(!utcp) {
 		errno = EFAULT;
 		return -1;
@@ -632,7 +632,8 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			c->dupack++;
 			if(c->dupack >= 3) {
 				debug("Triplicate ACK\n");
-				abort();
+				//TODO: Resend one packet and go to fast recovery mode. See RFC 6582.
+				//abort();
 			}
 		}
 	}
@@ -640,7 +641,7 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// 4. Update timers
 
 	if(advanced) {
-		timerclear(&c->conn_timeout); // It should be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
+		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
 		if(c->snd.una == c->snd.nxt)
 			timerclear(&c->rtrx_timeout);
 	}
@@ -714,10 +715,15 @@ int utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			abort();
 		}
 
-		int rxd;
+		ssize_t rxd;
 
 		if(c->recv) {
 			rxd = c->recv(c, data, len);
+			if(rxd != len) {
+				// TODO: once we have a receive buffer, handle the application not accepting all data.
+				fprintf(stderr, "c->recv(%p, %p, %zu) returned %zd\n", c, data, len, rxd);
+				abort();
+			}
 			if(rxd < 0)
 				rxd = 0;
 			else if(rxd > len)
@@ -797,7 +803,7 @@ reset:
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
-	debug("%p shutdown %d\n", c->utcp, dir);
+	debug("%p shutdown %d\n", c ? c->utcp : NULL, dir);
 	if(!c) {
 		errno = EFAULT;
 		return -1;
