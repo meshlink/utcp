@@ -202,6 +202,7 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
 		return NULL;
 
 	c->recv = recv;
+	c->priv = priv;
 
 	struct hdr hdr;
 
