@@ -80,6 +80,7 @@ struct utcp_connection {
 	// Callbacks
 
 	utcp_recv_t recv;
+	utcp_poll_t poll;
 
 	// TCP State
 

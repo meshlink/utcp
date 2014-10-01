@@ -44,6 +44,8 @@ typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, uint16_t 
 typedef ssize_t (*utcp_send_t)(struct utcp *utcp, const void *data, size_t len);
 typedef ssize_t (*utcp_recv_t)(struct utcp_connection *connection, const void *data, size_t len);
 
+typedef void (*utcp_poll_t)(struct utcp_connection *connection, size_t len);
+
 extern struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv);
 extern void utcp_exit(struct utcp *utcp);
 
@@ -55,6 +57,8 @@ extern int utcp_close(struct utcp_connection *connection);
 extern int utcp_abort(struct utcp_connection *connection);
 extern int utcp_shutdown(struct utcp_connection *connection, int how);
 extern int utcp_timeout(struct utcp *utcp);
+extern void utcp_set_recv_cb(struct utcp_connection *connection, utcp_recv_t recv);
+extern void utcp_set_poll_cb(struct utcp_connection *connection, utcp_poll_t poll);
 
 // Global socket options
 
@@ -68,6 +72,8 @@ extern void utcp_set_mtu(struct utcp *utcp, uint16_t mtu);
 
 extern size_t utcp_get_sndbuf(struct utcp_connection *connection);
 extern void utcp_set_sndbuf(struct utcp_connection *connection, size_t size);
+
+extern size_t utcp_get_sndbuf_free(struct utcp_connection *connection);
 
 extern bool utcp_get_nodelay(struct utcp_connection *connection);
 extern void utcp_set_nodelay(struct utcp_connection *connection, bool nodelay);

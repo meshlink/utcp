@@ -1022,6 +1022,9 @@ int utcp_timeout(struct utcp *utcp) {
 			retransmit(c);
 		}
 
+		if(c->poll && c->sndbufsize < c->maxsndbufsize / 2)
+			c->poll(c, c->maxsndbufsize - c->sndbufsize);
+
 		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <))
 			next = c->conn_timeout;
 
@@ -1097,6 +1100,10 @@ size_t utcp_get_sndbuf(struct utcp_connection *c) {
 	return c->maxsndbufsize;
 }
 
+size_t utcp_get_sndbuf_free(struct utcp_connection *c) {
+	return c->maxsndbufsize - c->sndbufsize;
+}
+
 void utcp_set_sndbuf(struct utcp_connection *c, size_t size) {
 	c->maxsndbufsize = size;
 	if(c->maxsndbufsize != size)
@@ -1121,4 +1128,12 @@ void utcp_set_keepalive(struct utcp_connection *c, bool keepalive) {
 
 size_t utcp_get_outq(struct utcp_connection *c) {
 	return seqdiff(c->snd.nxt, c->snd.una);
+}
+
+void utcp_set_recv_cb(struct utcp_connection *c, utcp_recv_t recv) {
+	c->recv = recv;
+}
+
+void utcp_set_poll_cb(struct utcp_connection *c, utcp_poll_t poll) {
+	c->poll = poll;
 }
