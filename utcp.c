@@ -276,21 +276,25 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
 	struct {
 		struct hdr hdr;
-		char data[c->utcp->mtu];
-	} pkt;
+		char data[];
+	} *pkt;
 
-	pkt.hdr.src = c->src;
-	pkt.hdr.dst = c->dst;
-	pkt.hdr.ack = c->rcv.nxt;
-	pkt.hdr.wnd = c->snd.wnd;
-	pkt.hdr.ctl = ACK;
-	pkt.hdr.aux = 0;
+	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+	if(!pkt->data)
+		return;
+
+	pkt->hdr.src = c->src;
+	pkt->hdr.dst = c->dst;
+	pkt->hdr.ack = c->rcv.nxt;
+	pkt->hdr.wnd = c->snd.wnd;
+	pkt->hdr.ctl = ACK;
+	pkt->hdr.aux = 0;
 
 	do {
 		uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
-		pkt.hdr.seq = c->snd.nxt;
+		pkt->hdr.seq = c->snd.nxt;
 
-		memcpy(pkt.data, data, seglen);
+		memcpy(pkt->data, data, seglen);
 
 		c->snd.nxt += seglen;
 		data += seglen;
@@ -301,16 +305,18 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 			case FIN_WAIT_1:
 			case CLOSING:
 				seglen--;
-				pkt.hdr.ctl |= FIN;
+				pkt->hdr.ctl |= FIN;
 				break;
 			default:
 				break;
 			}
 		}
 
-		print_packet(c->utcp, "send", &pkt, sizeof pkt.hdr + seglen);
-		c->utcp->send(c->utcp, &pkt, sizeof pkt.hdr + seglen);
+		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
+		c->utcp->send(c->utcp, pkt, sizeof pkt->hdr + seglen);
 	} while(left);
+
+	free(pkt);
 }
 
 ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
@@ -953,8 +959,12 @@ static void retransmit(struct utcp_connection *c) {
 
 	struct {
 		struct hdr hdr;
-		char data[c->utcp->mtu];
+		char *data;
 	} pkt;
+
+	pkt.data = malloc(c->utcp->mtu);
+	if(!pkt.data)
+		return;
 
 	pkt.hdr.src = c->src;
 	pkt.hdr.dst = c->dst;
@@ -1004,6 +1014,8 @@ static void retransmit(struct utcp_connection *c) {
 			// TODO: implement
 			abort();
 	}
+
+	free(pkt.data);
 }
 
 /* Handle timeouts.
