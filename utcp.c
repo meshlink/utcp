@@ -959,15 +959,15 @@ static void retransmit(struct utcp_connection *c) {
 
 	struct {
 		struct hdr hdr;
-		char *data;
-	} pkt;
+		char data[];
+	} *pkt;
 
-	pkt.data = malloc(c->utcp->mtu);
-	if(!pkt.data)
+	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+	if(!pkt)
 		return;
 
-	pkt.hdr.src = c->src;
-	pkt.hdr.dst = c->dst;
+	pkt->hdr.src = c->src;
+	pkt->hdr.dst = c->dst;
 
 	switch(c->state) {
 		case LISTEN:
@@ -975,27 +975,27 @@ static void retransmit(struct utcp_connection *c) {
 			break;
 
 		case SYN_SENT:
-			pkt.hdr.seq = c->snd.iss;
-			pkt.hdr.ack = 0;
-			pkt.hdr.wnd = c->rcv.wnd;
-			pkt.hdr.ctl = SYN;
-			print_packet(c->utcp, "rtrx", &pkt, sizeof pkt.hdr);
-			utcp->send(utcp, &pkt, sizeof pkt.hdr);
+			pkt->hdr.seq = c->snd.iss;
+			pkt->hdr.ack = 0;
+			pkt->hdr.wnd = c->rcv.wnd;
+			pkt->hdr.ctl = SYN;
+			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
+			utcp->send(utcp, pkt, sizeof pkt->hdr);
 			break;
 
 		case SYN_RECEIVED:
-			pkt.hdr.seq = c->snd.nxt;
-			pkt.hdr.ack = c->rcv.nxt;
-			pkt.hdr.ctl = SYN | ACK;
-			print_packet(c->utcp, "rtrx", &pkt, sizeof pkt.hdr);
-			utcp->send(utcp, &pkt, sizeof pkt.hdr);
+			pkt->hdr.seq = c->snd.nxt;
+			pkt->hdr.ack = c->rcv.nxt;
+			pkt->hdr.ctl = SYN | ACK;
+			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
+			utcp->send(utcp, pkt, sizeof pkt->hdr);
 			break;
 
 		case ESTABLISHED:
 		case FIN_WAIT_1:
-			pkt.hdr.seq = c->snd.una;
-			pkt.hdr.ack = c->rcv.nxt;
-			pkt.hdr.ctl = ACK;
+			pkt->hdr.seq = c->snd.una;
+			pkt->hdr.ack = c->rcv.nxt;
+			pkt->hdr.ctl = ACK;
 			uint32_t len = seqdiff(c->snd.nxt, c->snd.una);
 			if(c->state == FIN_WAIT_1)
 				len--;
@@ -1003,11 +1003,11 @@ static void retransmit(struct utcp_connection *c) {
 				len = utcp->mtu;
 			else {
 				if(c->state == FIN_WAIT_1)
-					pkt.hdr.ctl |= FIN;
+					pkt->hdr.ctl |= FIN;
 			}
-			memcpy(pkt.data, c->sndbuf, len);
-			print_packet(c->utcp, "rtrx", &pkt, sizeof pkt.hdr + len);
-			utcp->send(utcp, &pkt, sizeof pkt.hdr + len);
+			memcpy(pkt->data, c->sndbuf, len);
+			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
+			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
 			break;
 
 		default:
@@ -1015,7 +1015,7 @@ static void retransmit(struct utcp_connection *c) {
 			abort();
 	}
 
-	free(pkt.data);
+	free(pkt);
 }
 
 /* Handle timeouts.
