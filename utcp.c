@@ -1055,7 +1055,7 @@ int utcp_timeout(struct utcp *utcp) {
 			retransmit(c);
 		}
 
-		if(c->poll && c->sndbufsize < c->maxsndbufsize / 2)
+		if(c->poll && c->sndbufsize < c->maxsndbufsize / 2 && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
 			c->poll(c, c->maxsndbufsize - c->sndbufsize);
 
 		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <))
