@@ -117,9 +117,12 @@ static int32_t seqdiff(uint32_t a, uint32_t b) {
 // This gives O(log(N)) lookup time, O(N log(N)) insertion time and O(N) deletion time.
 
 static int compare(const void *va, const void *vb) {
+	assert(va && vb);
+
 	const struct utcp_connection *a = *(struct utcp_connection **)va;
 	const struct utcp_connection *b = *(struct utcp_connection **)vb;
 
+	assert(a && b);
 	assert(a->src && b->src);
 
 	int c = (int)a->src - (int)b->src;
@@ -147,7 +150,7 @@ static void free_connection(struct utcp_connection *c) {
 	assert(cp);
 
 	int i = cp - utcp->connections;
-	memmove(cp + i, cp + i + 1, (utcp->nconnections - i - 1) * sizeof *cp);
+	memmove(cp, cp + 1, (utcp->nconnections - i - 1) * sizeof *cp);
 	utcp->nconnections--;
 
 	free(c->sndbuf);
