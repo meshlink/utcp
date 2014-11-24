@@ -1,17 +1,23 @@
 CFLAGS ?= -O0 -Wall -g
-CFLAGS += -std=c99 -DUTCP_DEBUG
+CFLAGS += -std=c99
 
-BIN = selftest test
+BIN = utest selftest test
 
 all: $(BIN)
+check: utest
+	./utest
 
 utcp.o: utcp.c utcp.h utcp_priv.h
 
 test: utcp.o test.c
 
-selftest: utcp.o selftest.c
+selftest: utcp.c selftest.c
+	$(CC) -o $@ $^ $(CFLAGS) -DUTCP_DEBUG
+
+utest: utcp.o utest.c
+	$(CC) -o $@ $^ $(CFLAGS) `pkg-config glib-2.0 --cflags --libs`
 
 clean:
 	rm -f *.o $(BIN)
 
-.PHONY: clean
+.PHONY: all check clean
