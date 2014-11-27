@@ -5,7 +5,7 @@ BIN = utest selftest test
 
 all: $(BIN)
 check: utest
-	./utest
+	gtester -k utest
 
 utcp.o: utcp.c utcp.h utcp_priv.h
 
