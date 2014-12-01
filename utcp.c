@@ -968,6 +968,8 @@ static void retransmit(struct utcp_connection *c) {
 	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
 	if(!pkt)
 		return;
+	memset(pkt, 0, sizeof pkt->hdr + c->utcp->mtu);
+
 
 	pkt->hdr.src = c->src;
 	pkt->hdr.dst = c->dst;
