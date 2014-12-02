@@ -130,13 +130,11 @@ static ssize_t buffer_put(struct buffer *buf, const void *data, size_t len) {
 		if(newsize > buf->maxsize)
 			newsize = buf->maxsize;
 		char *newdata = realloc(buf->data, newsize);
-		fprintf(stderr, "%p = realloc(%p, %zu)\n", newdata, buf->data, newsize);
 		if(!newdata)
 			return -1;
 		buf->data = newdata;
 		buf->size = newsize;
 	}
-	fprintf(stderr, "memcpy(%p, %p, %zu)\n", buf->data + buf->used, data, len);
 	memcpy(buf->data + buf->used, data, len);
 	buf->used += len;
 	return len;
@@ -803,7 +801,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			rxd = c->recv(c, data, len);
 			if(rxd != len) {
 				// TODO: once we have a receive buffer, handle the application not accepting all data.
-				fprintf(stderr, "c->recv(%p, %p, %zu) returned %zd\n", c, data, len, rxd);
 				abort();
 			}
 			if(rxd < 0)
@@ -933,6 +930,8 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 int utcp_close(struct utcp_connection *c) {
 	if(utcp_shutdown(c, SHUT_RDWR))
 		return -1;
+	c->recv = NULL;
+	c->poll = NULL;
 	c->reapable = true;
 	return 0;
 }
@@ -949,6 +948,8 @@ int utcp_abort(struct utcp_connection *c) {
 		return -1;
 	}
 
+	c->recv = NULL;
+	c->poll = NULL;
 	c->reapable = true;
 
 	switch(c->state) {
