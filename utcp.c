@@ -113,6 +113,76 @@ static int32_t seqdiff(uint32_t a, uint32_t b) {
 	return a - b;
 }
 
+// Buffer functions
+// TODO: convert to ringbuffers to avoid memmove() operations.
+
+// Store data into the buffer
+static ssize_t buffer_put(struct buffer *buf, const void *data, size_t len) {
+	if(buf->maxsize <= buf->used)
+		return 0;
+	if(len > buf->maxsize - buf->used)
+		len = buf->maxsize - buf->used;
+	if(len > buf->size - buf->used) {
+		size_t newsize = buf->size;
+		do {
+			newsize *= 2;
+		} while(newsize < buf->used + len);
+		if(newsize > buf->maxsize)
+			newsize = buf->maxsize;
+		char *newdata = realloc(buf->data, newsize);
+		fprintf(stderr, "%p = realloc(%p, %zu)\n", newdata, buf->data, newsize);
+		if(!newdata)
+			return -1;
+		buf->data = newdata;
+		buf->size = newsize;
+	}
+	fprintf(stderr, "memcpy(%p, %p, %zu)\n", buf->data + buf->used, data, len);
+	memcpy(buf->data + buf->used, data, len);
+	buf->used += len;
+	return len;
+}
+
+// Get data from the buffer. data can be NULL.
+static ssize_t buffer_get(struct buffer *buf, void *data, size_t len) {
+	if(len > buf->used)
+		len = buf->used;
+	if(data)
+		memcpy(data, buf->data, len);
+	if(len < buf->used)
+		memmove(buf->data, buf->data + len, buf->used - len);
+	buf->used -= len;
+	return len;
+}
+
+// Copy data from the buffer without removing it.
+static ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t len) {
+	if(offset >= buf->used)
+		return 0;
+	if(offset + len > buf->used)
+		len = buf->used - offset;
+	memcpy(data, buf->data + offset, len);
+	return len;
+}
+
+static bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen) {
+	memset(buf, 0, sizeof *buf);
+	buf->data = malloc(len);
+	if(!len)
+		return false;
+	buf->size = len;
+	buf->maxsize = maxlen;
+	return true;
+}
+
+static void buffer_exit(struct buffer *buf) {
+	free(buf->data);
+	memset(buf, 0, sizeof *buf);
+}
+
+static uint32_t buffer_free(const struct buffer *buf) {
+	return buf->maxsize - buf->used;
+}
+
 // Connections are stored in a sorted list.
 // This gives O(log(N)) lookup time, O(N log(N)) insertion time and O(N) deletion time.
 
@@ -153,7 +223,7 @@ static void free_connection(struct utcp_connection *c) {
 	memmove(cp, cp + 1, (utcp->nconnections - i - 1) * sizeof *cp);
 	utcp->nconnections--;
 
-	free(c->sndbuf);
+	buffer_exit(&c->sndbuf);
 	free(c);
 }
 
@@ -192,10 +262,7 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	if(!c)
 		return NULL;
 
-	c->sndbufsize = DEFAULT_SNDBUFSIZE;
-	c->maxsndbufsize = DEFAULT_MAXSNDBUFSIZE;
-	c->sndbuf = malloc(c->sndbufsize);
-	if(!c->sndbuf) {
+	if(!buffer_init(&c->sndbuf, DEFAULT_SNDBUFSIZE, DEFAULT_MAXSNDBUFSIZE)) {
 		free(c);
 		return NULL;
 	}
@@ -264,7 +331,6 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 static void ack(struct utcp_connection *c, bool sendatleastone) {
 	int32_t left = seqdiff(c->snd.last, c->snd.nxt);
 	int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
-	char *data = c->sndbuf + seqdiff(c->snd.nxt, c->snd.una);
 
 	assert(left >= 0);
 
@@ -297,10 +363,9 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 		uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
 		pkt->hdr.seq = c->snd.nxt;
 
-		memcpy(pkt->data, data, seglen);
+		buffer_copy(&c->sndbuf, pkt->data, seqdiff(c->snd.nxt, c->snd.una), seglen);
 
 		c->snd.nxt += seglen;
-		data += seglen;
 		left -= seglen;
 
 		if(c->state != ESTABLISHED && !left && seglen) {
@@ -360,44 +425,13 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		return -1;
 	}
 
-	uint32_t bufused = seqdiff(c->snd.nxt, c->snd.una);
-
-	/* Check our send buffer.
-	 * - If it's big enough, just put the data in there.
-	 * - If not, decide whether to enlarge if possible.
-	 * - Cap len so it doesn't overflow our buffer.
-	 */
-
-	if(len > c->sndbufsize - bufused && c->sndbufsize < c->maxsndbufsize) {
-		uint32_t newbufsize;
-		if(c->sndbufsize > c->maxsndbufsize / 2)
-			newbufsize = c->maxsndbufsize;
-		else
-			newbufsize = c->sndbufsize * 2;
-		if(bufused + len > newbufsize) {
-			if(bufused + len > c->maxsndbufsize)
-				newbufsize = c->maxsndbufsize;
-			else
-				newbufsize = bufused + len;
-		}
-		char *newbuf = realloc(c->sndbuf, newbufsize);
-		if(newbuf) {
-			c->sndbuf = newbuf;
-			c->sndbufsize = newbufsize;
-		}
-	}
-
-	if(len > c->sndbufsize - bufused)
-		len = c->sndbufsize - bufused;
-
-	if(!len) {
-		errno == EWOULDBLOCK;
+	len = buffer_put(&c->sndbuf, data, len);
+	if(len <= 0) {
+		errno = EWOULDBLOCK;
 		return 0;
 	}
 
-	memcpy(c->sndbuf + bufused, data, len);
 	c->snd.last += len;
-
 	ack(c, false);
 	return len;
 }
@@ -504,6 +538,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return 0;
 
 	// It is for an existing connection.
+
+	uint32_t prevrcvnxt = c->rcv.nxt;
 
 	// 1. Drop invalid packets.
 
@@ -627,7 +663,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// 3. Advance snd.una
 
 	uint32_t advanced = seqdiff(hdr.ack, c->snd.una);
-	uint32_t prevrcvnxt = c->rcv.nxt;
+	prevrcvnxt = c->rcv.nxt;
 
 	if(advanced) {
 		int32_t data_acked = advanced;
@@ -647,18 +683,15 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		int32_t bufused = seqdiff(c->snd.last, c->snd.una);
 		assert(data_acked <= bufused);
 
-		// Make room in the send buffer.
-		// TODO: try to avoid memmoving too much. Circular buffer?
-		uint32_t left = bufused - data_acked;
-		if(data_acked && left)
-			memmove(c->sndbuf, c->sndbuf + data_acked, left);
+		if(data_acked)
+			buffer_get(&c->sndbuf, NULL, data_acked);
 
 		c->snd.una = hdr.ack;
 
 		c->dupack = 0;
 		c->snd.cwnd += utcp->mtu;
-		if(c->snd.cwnd > c->maxsndbufsize)
-			c->snd.cwnd = c->maxsndbufsize;
+		if(c->snd.cwnd > c->sndbuf.maxsize)
+			c->snd.cwnd = c->sndbuf.maxsize;
 
 		// Check if we have sent a FIN that is now ACKed.
 		switch(c->state) {
@@ -1010,7 +1043,7 @@ static void retransmit(struct utcp_connection *c) {
 				if(c->state == FIN_WAIT_1)
 					pkt->hdr.ctl |= FIN;
 			}
-			memcpy(pkt->data, c->sndbuf, len);
+			buffer_copy(&c->sndbuf, pkt->data, 0, len);
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
 			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
 			break;
@@ -1060,8 +1093,8 @@ int utcp_timeout(struct utcp *utcp) {
 			retransmit(c);
 		}
 
-		if(c->poll && c->sndbufsize < c->maxsndbufsize / 2 && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
-			c->poll(c, c->maxsndbufsize - c->sndbufsize);
+		if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
+			c->poll(c, buffer_free(&c->sndbuf));
 
 		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <))
 			next = c->conn_timeout;
@@ -1110,7 +1143,7 @@ void utcp_exit(struct utcp *utcp) {
 	for(int i = 0; i < utcp->nconnections; i++) {
 		if(!utcp->connections[i]->reapable)
 			debug("Warning, freeing unclosed connection %p\n", utcp->connections[i]);
-		free(utcp->connections[i]->sndbuf);
+		buffer_exit(&utcp->connections[i]->sndbuf);
 		free(utcp->connections[i]);
 	}
 	free(utcp->connections);
@@ -1135,17 +1168,17 @@ void utcp_set_user_timeout(struct utcp *u, int timeout) {
 }
 
 size_t utcp_get_sndbuf(struct utcp_connection *c) {
-	return c->maxsndbufsize;
+	return c->sndbuf.maxsize;
 }
 
 size_t utcp_get_sndbuf_free(struct utcp_connection *c) {
-	return c->maxsndbufsize - c->sndbufsize;
+	return buffer_free(&c->sndbuf);
 }
 
 void utcp_set_sndbuf(struct utcp_connection *c, size_t size) {
-	c->maxsndbufsize = size;
-	if(c->maxsndbufsize != size)
-		c->maxsndbufsize = -1;
+	c->sndbuf.maxsize = size;
+	if(c->sndbuf.maxsize != size)
+		c->sndbuf.maxsize = -1;
 }
 
 bool utcp_get_nodelay(struct utcp_connection *c) {
