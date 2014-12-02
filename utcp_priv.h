@@ -71,6 +71,13 @@ static const char *strstate[] __attribute__((unused)) = {
 	[TIME_WAIT] = "TIME_WAIT"
 };
 
+struct buffer {
+	char *data;
+	uint32_t used;
+	uint32_t size;
+	uint32_t maxsize;
+};
+
 struct utcp_connection {
 	void *priv;
 	struct utcp *utcp;
@@ -113,9 +120,7 @@ struct utcp_connection {
 
 	// Send buffer
 
-	char *sndbuf;
-	uint32_t sndbufsize;
-	uint32_t maxsndbufsize;
+	struct buffer sndbuf;
 
 	// Per-socket options
 
