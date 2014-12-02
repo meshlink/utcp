@@ -930,6 +930,8 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 int utcp_close(struct utcp_connection *c) {
 	if(utcp_shutdown(c, SHUT_RDWR))
 		return -1;
+	c->recv = NULL;
+	c->poll = NULL;
 	c->reapable = true;
 	return 0;
 }
@@ -946,6 +948,8 @@ int utcp_abort(struct utcp_connection *c) {
 		return -1;
 	}
 
+	c->recv = NULL;
+	c->poll = NULL;
 	c->reapable = true;
 
 	switch(c->state) {
