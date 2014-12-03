@@ -1051,7 +1051,7 @@ static void retransmit(struct utcp_connection *c) {
 
 		default:
 			// TODO: implement
-			abort();
+			return;
 	}
 
 	free(pkt);
