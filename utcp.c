@@ -989,7 +989,7 @@ int utcp_abort(struct utcp_connection *c) {
 }
 
 static void retransmit(struct utcp_connection *c) {
-	if(c->state == CLOSED || c->snd.nxt == c->snd.una)
+	if(c->state == CLOSED || c->state == CLOSING || c->snd.nxt == c->snd.una)
 		return;
 
 	struct utcp *utcp = c->utcp;
