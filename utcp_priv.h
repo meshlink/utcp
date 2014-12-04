@@ -31,7 +31,7 @@
 #define RST 8
 
 #define DEFAULT_SNDBUFSIZE 4096
-#define DEFAULT_MAXSNDBUFSIZE 2097152
+#define DEFAULT_MAXSNDBUFSIZE 131072
 
 struct hdr {
 	uint16_t src; // Source port
