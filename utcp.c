@@ -486,7 +486,6 @@ static void retransmit(struct utcp_connection *c) {
 			pkt->hdr.ack = c->rcv.nxt;
 			pkt->hdr.ctl = ACK;
 			uint32_t len = seqdiff(c->snd.nxt, c->snd.una);
-			fprintf(stderr, "retransmit %u %u %u\n", pkt->hdr.seq, pkt->hdr.ack, len);
 			if(c->state == FIN_WAIT_1)
 				len--;
 			if(len > utcp->mtu)
@@ -782,7 +781,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			c->dupack++;
 			if(c->dupack == 3) {
 				debug("Triplicate ACK\n");
-				fprintf(stderr, "Triplicate ACK\n");
 				//TODO: Resend one packet and go to fast recovery mode. See RFC 6582.
 				//We do a very simple variant here; reset the nxt pointer to the last acknowledged packet from the peer.
 				//This will cause us to start retransmitting, but at the same speed as the incoming ACKs arrive,
