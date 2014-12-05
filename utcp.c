@@ -1061,7 +1061,7 @@ static void retransmit(struct utcp_connection *c) {
  * The return value is the time to the next timeout in milliseconds,
  * or maybe a negative value if the timeout is infinite.
  */
-int utcp_timeout(struct utcp *utcp) {
+struct timeval utcp_timeout(struct utcp *utcp) {
 	struct timeval now;
 	gettimeofday(&now, NULL);
 	struct timeval next = {now.tv_sec + 3600, now.tv_usec};
@@ -1111,9 +1111,7 @@ int utcp_timeout(struct utcp *utcp) {
 
 	struct timeval diff;
 	timersub(&next, &now, &diff);
-	if(diff.tv_sec < 0)
-		return 0;
-	return diff.tv_sec * 1000 + diff.tv_usec / 1000;
+	return diff;
 }
 
 struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv) {

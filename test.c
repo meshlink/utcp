@@ -100,10 +100,10 @@ int main(int argc, char *argv[]) {
 	};
 
 	char buf[102400];
-	int timeout = utcp_timeout(u);
+	struct timeval timeout = utcp_timeout(u);
 
 	while(dir) {
-		poll(fds, 2, timeout);
+		poll(fds, 2, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
 
 		if(fds[0].revents) {
 			int len = read(0, buf, sizeof buf);

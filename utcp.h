@@ -23,6 +23,8 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
+// TODO: Windows
+#include <sys/time.h>
 
 #ifndef UTCP_INTERNAL
 struct utcp {
@@ -56,7 +58,7 @@ extern ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len);
 extern int utcp_close(struct utcp_connection *connection);
 extern int utcp_abort(struct utcp_connection *connection);
 extern int utcp_shutdown(struct utcp_connection *connection, int how);
-extern int utcp_timeout(struct utcp *utcp);
+extern struct timeval utcp_timeout(struct utcp *utcp);
 extern void utcp_set_recv_cb(struct utcp_connection *connection, utcp_recv_t recv);
 extern void utcp_set_poll_cb(struct utcp_connection *connection, utcp_poll_t poll);
 
