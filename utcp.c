@@ -440,6 +440,75 @@ static void swap_ports(struct hdr *hdr) {
 	hdr->dst = tmp;
 }
 
+static void retransmit(struct utcp_connection *c) {
+	if(c->state == CLOSED || c->snd.nxt == c->snd.una)
+		return;
+
+	struct utcp *utcp = c->utcp;
+
+	struct {
+		struct hdr hdr;
+		char data[];
+	} *pkt;
+
+	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+	if(!pkt)
+		return;
+
+	pkt->hdr.src = c->src;
+	pkt->hdr.dst = c->dst;
+
+	switch(c->state) {
+		case LISTEN:
+			// TODO: this should not happen
+			break;
+
+		case SYN_SENT:
+			pkt->hdr.seq = c->snd.iss;
+			pkt->hdr.ack = 0;
+			pkt->hdr.wnd = c->rcv.wnd;
+			pkt->hdr.ctl = SYN;
+			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
+			utcp->send(utcp, pkt, sizeof pkt->hdr);
+			break;
+
+		case SYN_RECEIVED:
+			pkt->hdr.seq = c->snd.nxt;
+			pkt->hdr.ack = c->rcv.nxt;
+			pkt->hdr.ctl = SYN | ACK;
+			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
+			utcp->send(utcp, pkt, sizeof pkt->hdr);
+			break;
+
+		case ESTABLISHED:
+		case FIN_WAIT_1:
+			pkt->hdr.seq = c->snd.una;
+			pkt->hdr.ack = c->rcv.nxt;
+			pkt->hdr.ctl = ACK;
+			uint32_t len = seqdiff(c->snd.nxt, c->snd.una);
+			fprintf(stderr, "retransmit %u %u %u\n", pkt->hdr.seq, pkt->hdr.ack, len);
+			if(c->state == FIN_WAIT_1)
+				len--;
+			if(len > utcp->mtu)
+				len = utcp->mtu;
+			else {
+				if(c->state == FIN_WAIT_1)
+					pkt->hdr.ctl |= FIN;
+			}
+			buffer_copy(&c->sndbuf, pkt->data, 0, len);
+			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
+			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
+			break;
+
+		default:
+			// TODO: implement
+			abort();
+	}
+
+	free(pkt);
+}
+
+
 ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	if(!utcp) {
 		errno = EFAULT;
@@ -711,10 +780,14 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	} else {
 		if(!len) {
 			c->dupack++;
-			if(c->dupack >= 3) {
+			if(c->dupack == 3) {
 				debug("Triplicate ACK\n");
+				fprintf(stderr, "Triplicate ACK\n");
 				//TODO: Resend one packet and go to fast recovery mode. See RFC 6582.
-				//abort();
+				//We do a very simple variant here; reset the nxt pointer to the last acknowledged packet from the peer.
+				//This will cause us to start retransmitting, but at the same speed as the incoming ACKs arrive,
+				//thus preventing a drop in speed.
+				c->snd.nxt = c->snd.una;
 			}
 		}
 	}
@@ -987,73 +1060,6 @@ int utcp_abort(struct utcp_connection *c) {
 	print_packet(c->utcp, "send", &hdr, sizeof hdr);
 	c->utcp->send(c->utcp, &hdr, sizeof hdr);
 	return 0;
-}
-
-static void retransmit(struct utcp_connection *c) {
-	if(c->state == CLOSED || c->snd.nxt == c->snd.una)
-		return;
-
-	struct utcp *utcp = c->utcp;
-
-	struct {
-		struct hdr hdr;
-		char data[];
-	} *pkt;
-
-	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
-	if(!pkt)
-		return;
-
-	pkt->hdr.src = c->src;
-	pkt->hdr.dst = c->dst;
-
-	switch(c->state) {
-		case LISTEN:
-			// TODO: this should not happen
-			break;
-
-		case SYN_SENT:
-			pkt->hdr.seq = c->snd.iss;
-			pkt->hdr.ack = 0;
-			pkt->hdr.wnd = c->rcv.wnd;
-			pkt->hdr.ctl = SYN;
-			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-			utcp->send(utcp, pkt, sizeof pkt->hdr);
-			break;
-
-		case SYN_RECEIVED:
-			pkt->hdr.seq = c->snd.nxt;
-			pkt->hdr.ack = c->rcv.nxt;
-			pkt->hdr.ctl = SYN | ACK;
-			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-			utcp->send(utcp, pkt, sizeof pkt->hdr);
-			break;
-
-		case ESTABLISHED:
-		case FIN_WAIT_1:
-			pkt->hdr.seq = c->snd.una;
-			pkt->hdr.ack = c->rcv.nxt;
-			pkt->hdr.ctl = ACK;
-			uint32_t len = seqdiff(c->snd.nxt, c->snd.una);
-			if(c->state == FIN_WAIT_1)
-				len--;
-			if(len > utcp->mtu)
-				len = utcp->mtu;
-			else {
-				if(c->state == FIN_WAIT_1)
-					pkt->hdr.ctl |= FIN;
-			}
-			buffer_copy(&c->sndbuf, pkt->data, 0, len);
-			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
-			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
-			break;
-
-		default:
-			// TODO: implement
-			abort();
-	}
-
-	free(pkt);
 }
 
 /* Handle timeouts.
