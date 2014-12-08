@@ -366,7 +366,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 		c->snd.nxt += seglen;
 		left -= seglen;
 
-		if(c->state != ESTABLISHED && !left && seglen) {
+		if(c->state != ESTABLISHED && seglen && c->snd.nxt == c->snd.last) {
 			switch(c->state) {
 			case FIN_WAIT_1:
 			case CLOSING:
@@ -954,7 +954,7 @@ reset:
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
-	debug("%p shutdown %d\n", c ? c->utcp : NULL, dir);
+	debug("%p shutdown %d at %u\n", c ? c->utcp : NULL, dir, c->snd.last);
 	if(!c) {
 		errno = EFAULT;
 		return -1;
@@ -967,6 +967,7 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	}
 
 	// TODO: handle dir
+	// TODO: check that repeated calls with the same parameters should have no effect
 
 	switch(c->state) {
 	case CLOSED:
