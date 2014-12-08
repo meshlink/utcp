@@ -1174,7 +1174,10 @@ size_t utcp_get_sndbuf(struct utcp_connection *c) {
 }
 
 size_t utcp_get_sndbuf_free(struct utcp_connection *c) {
-	return buffer_free(&c->sndbuf);
+	if(c->state == ESTABLISHED || c->state == CLOSE_WAIT)
+		return buffer_free(&c->sndbuf);
+	else
+		return 0;
 }
 
 void utcp_set_sndbuf(struct utcp_connection *c, size_t size) {
