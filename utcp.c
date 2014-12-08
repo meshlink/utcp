@@ -1154,63 +1154,71 @@ void utcp_exit(struct utcp *utcp) {
 }
 
 uint16_t utcp_get_mtu(struct utcp *utcp) {
-	return utcp->mtu;
+	return utcp ? utcp->mtu : 0;
 }
 
 void utcp_set_mtu(struct utcp *utcp, uint16_t mtu) {
 	// TODO: handle overhead of the header
-	utcp->mtu = mtu;
+	if(utcp)
+		utcp->mtu = mtu;
 }
 
 int utcp_get_user_timeout(struct utcp *u) {
-	return u->timeout;
+	return u ? u->timeout : 0;
 }
 
 void utcp_set_user_timeout(struct utcp *u, int timeout) {
-	u->timeout = timeout;
+	if(u)
+		u->timeout = timeout;
 }
 
 size_t utcp_get_sndbuf(struct utcp_connection *c) {
-	return c->sndbuf.maxsize;
+	return c ? c->sndbuf.maxsize : 0;
 }
 
 size_t utcp_get_sndbuf_free(struct utcp_connection *c) {
-	if(c->state == ESTABLISHED || c->state == CLOSE_WAIT)
+	if(c && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
 		return buffer_free(&c->sndbuf);
 	else
 		return 0;
 }
 
 void utcp_set_sndbuf(struct utcp_connection *c, size_t size) {
+	if(!c)
+		return;
 	c->sndbuf.maxsize = size;
 	if(c->sndbuf.maxsize != size)
 		c->sndbuf.maxsize = -1;
 }
 
 bool utcp_get_nodelay(struct utcp_connection *c) {
-	return c->nodelay;
+	return c ? c->nodelay : false;
 }
 
 void utcp_set_nodelay(struct utcp_connection *c, bool nodelay) {
-	c->nodelay = nodelay;
+	if(c)
+		c->nodelay = nodelay;
 }
 
 bool utcp_get_keepalive(struct utcp_connection *c) {
-	return c->keepalive;
+	return c ? c->keepalive : false;
 }
 
 void utcp_set_keepalive(struct utcp_connection *c, bool keepalive) {
-	c->keepalive = keepalive;
+	if(c)
+		c->keepalive = keepalive;
 }
 
 size_t utcp_get_outq(struct utcp_connection *c) {
-	return seqdiff(c->snd.nxt, c->snd.una);
+	return c ? seqdiff(c->snd.nxt, c->snd.una) : 0;
 }
 
 void utcp_set_recv_cb(struct utcp_connection *c, utcp_recv_t recv) {
-	c->recv = recv;
+	if(c)
+		c->recv = recv;
 }
 
 void utcp_set_poll_cb(struct utcp_connection *c, utcp_poll_t poll) {
-	c->poll = poll;
+	if(c)
+		c->poll = poll;
 }
