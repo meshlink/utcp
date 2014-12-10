@@ -103,6 +103,19 @@ static void set_state(struct utcp_connection *c, enum state state) {
 	debug("%p new state: %s\n", c->utcp, strstate[state]);
 }
 
+static bool fin_wanted(struct utcp_connection *c, uint32_t seq) {
+	if(seq != c->snd.last)
+		return false;
+	switch(c->state) {
+	case FIN_WAIT_1:
+	case CLOSING:
+	case LAST_ACK:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static inline void list_connections(struct utcp *utcp) {
 	debug("%p has %d connections:\n", utcp, utcp->nconnections);
 	for(int i = 0; i < utcp->nconnections; i++)
@@ -366,16 +379,9 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 		c->snd.nxt += seglen;
 		left -= seglen;
 
-		if(c->state != ESTABLISHED && seglen && c->snd.nxt == c->snd.last) {
-			switch(c->state) {
-			case FIN_WAIT_1:
-			case CLOSING:
-				seglen--;
-				pkt->hdr.ctl |= FIN;
-				break;
-			default:
-				break;
-			}
+		if(seglen && fin_wanted(c, c->snd.nxt)) {
+			seglen--;
+			pkt->hdr.ctl |= FIN;
 		}
 
 		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
