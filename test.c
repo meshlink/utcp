@@ -40,10 +40,13 @@ void do_accept(struct utcp_connection *nc, uint16_t port) {
 
 ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
-	if(drand48() >= dropout)
-		return send(s, data, len, MSG_DONTWAIT);
-	else
+	if(drand48() < dropout)
 		return len;
+
+	ssize_t result = send(s, data, len, MSG_DONTWAIT);
+	if(result <= 0)
+		fprintf(stderr, "Error sending UDP packet: %s\n", strerror(errno));
+	return result;
 }
 
 int main(int argc, char *argv[]) {
@@ -103,10 +106,19 @@ int main(int argc, char *argv[]) {
 	struct timeval timeout = utcp_timeout(u);
 
 	while(dir) {
-		poll(fds, 2, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
+		size_t max = c ? utcp_get_sndbuf_free(c) : 0;
+		if(max > sizeof buf)
+			max = sizeof buf;
+
+		if((dir & 1) && max)
+			poll(fds, 2, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
+		else
+			poll(fds + 1, 1, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
 
 		if(fds[0].revents) {
-			int len = read(0, buf, sizeof buf);
+			fds[0].revents = 0;
+			fprintf(stderr, "0");
+			ssize_t len = read(0, buf, max);
 			if(len <= 0) {
 				fds[0].fd = -1;
 				dir &= ~1;
@@ -117,16 +129,23 @@ int main(int argc, char *argv[]) {
 				else
 					continue;
 			}
-			if(c)
-				utcp_send(c, buf, len);
+			if(c) {
+				ssize_t sent = utcp_send(c, buf, len);
+				if(sent != len)
+					fprintf(stderr, "PANIEK: %zd != %zd\n", sent, len);
+			}
 		}
 
 		if(fds[1].revents) {
+			fds[1].revents = 0;
+			fprintf(stderr, "1");
 			struct sockaddr_storage ss;
 			socklen_t sl = sizeof ss;
 			int len = recvfrom(s, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&ss, &sl);
-			if(len <= 0)
+			if(len <= 0) {
+				fprintf(stderr, "Error receiving UDP packet: %s\n", strerror(errno));
 				break;
+			}
 			if(!connected)
 				if(!connect(s, (struct sockaddr *)&ss, sl))
 					connected = true;

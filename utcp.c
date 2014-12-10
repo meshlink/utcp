@@ -103,6 +103,19 @@ static void set_state(struct utcp_connection *c, enum state state) {
 	debug("%p new state: %s\n", c->utcp, strstate[state]);
 }
 
+static bool fin_wanted(struct utcp_connection *c, uint32_t seq) {
+	if(seq != c->snd.last)
+		return false;
+	switch(c->state) {
+	case FIN_WAIT_1:
+	case CLOSING:
+	case LAST_ACK:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static inline void list_connections(struct utcp *utcp) {
 	debug("%p has %d connections:\n", utcp, utcp->nconnections);
 	for(int i = 0; i < utcp->nconnections; i++)
@@ -366,16 +379,9 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 		c->snd.nxt += seglen;
 		left -= seglen;
 
-		if(c->state != ESTABLISHED && !left && seglen) {
-			switch(c->state) {
-			case FIN_WAIT_1:
-			case CLOSING:
-				seglen--;
-				pkt->hdr.ctl |= FIN;
-				break;
-			default:
-				break;
-			}
+		if(seglen && fin_wanted(c, c->snd.nxt)) {
+			seglen--;
+			pkt->hdr.ctl |= FIN;
 		}
 
 		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
@@ -459,11 +465,8 @@ static void retransmit(struct utcp_connection *c) {
 	pkt->hdr.dst = c->dst;
 
 	switch(c->state) {
-		case LISTEN:
-			// TODO: this should not happen
-			break;
-
 		case SYN_SENT:
+			// Send our SYN again
 			pkt->hdr.seq = c->snd.iss;
 			pkt->hdr.ack = 0;
 			pkt->hdr.wnd = c->rcv.wnd;
@@ -473,6 +476,7 @@ static void retransmit(struct utcp_connection *c) {
 			break;
 
 		case SYN_RECEIVED:
+			// Send SYNACK again
 			pkt->hdr.seq = c->snd.nxt;
 			pkt->hdr.ack = c->rcv.nxt;
 			pkt->hdr.ctl = SYN | ACK;
@@ -482,26 +486,35 @@ static void retransmit(struct utcp_connection *c) {
 
 		case ESTABLISHED:
 		case FIN_WAIT_1:
+		case CLOSE_WAIT:
+		case CLOSING:
+		case LAST_ACK:
+			// Send unacked data again.
 			pkt->hdr.seq = c->snd.una;
 			pkt->hdr.ack = c->rcv.nxt;
 			pkt->hdr.ctl = ACK;
-			uint32_t len = seqdiff(c->snd.nxt, c->snd.una);
-			if(c->state == FIN_WAIT_1)
-				len--;
+			uint32_t len = seqdiff(c->snd.last, c->snd.una);
 			if(len > utcp->mtu)
 				len = utcp->mtu;
-			else {
-				if(c->state == FIN_WAIT_1)
-					pkt->hdr.ctl |= FIN;
+			if(fin_wanted(c, c->snd.una + len)) {
+				len--;
+				pkt->hdr.ctl |= FIN;
 			}
 			buffer_copy(&c->sndbuf, pkt->data, 0, len);
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
 			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
 			break;
 
-		default:
-			// TODO: implement
+		case CLOSED:
+		case LISTEN:
+		case TIME_WAIT:
+		case FIN_WAIT_2:
+			// We shouldn't need to retransmit anything in this state.
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			timerclear(&c->rtrx_timeout);
+			break;
 	}
 
 	free(pkt);
@@ -623,7 +636,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	case TIME_WAIT:
 		break;
 	default:
+#ifdef UTCP_DEBUG
 		abort();
+#endif
+		break;
 	}
 
 	// 1b. Drop packets with a sequence number not in our receive window.
@@ -723,7 +739,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			set_state(c, CLOSED);
 			return 0;
 		default:
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			break;
 		}
 	}
 
@@ -822,7 +841,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			// Ehm, no. We should never receive a second SYN.
 			goto reset;
 		default:
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			return 0;
 		}
 
 		// SYN counts as one sequence number
@@ -852,7 +874,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case SYN_SENT:
 		case SYN_RECEIVED:
 			// This should never happen.
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			return 0;
 		case ESTABLISHED:
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
@@ -864,7 +889,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			// Ehm no, We should never receive more data after a FIN.
 			goto reset;
 		default:
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			return 0;
 		}
 
 		ssize_t rxd;
@@ -893,7 +921,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case SYN_SENT:
 		case SYN_RECEIVED:
 			// This should never happen.
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			break;
 		case ESTABLISHED:
 			set_state(c, CLOSE_WAIT);
 			break;
@@ -912,7 +943,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			// Ehm, no. We should never receive a second FIN.
 			goto reset;
 		default:
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			break;
 		}
 
 		// FIN counts as one sequence number
@@ -954,7 +988,7 @@ reset:
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
-	debug("%p shutdown %d\n", c ? c->utcp : NULL, dir);
+	debug("%p shutdown %d at %u\n", c ? c->utcp : NULL, dir, c->snd.last);
 	if(!c) {
 		errno = EFAULT;
 		return -1;
@@ -967,6 +1001,7 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	}
 
 	// TODO: handle dir
+	// TODO: check that repeated calls with the same parameters should have no effect
 
 	switch(c->state) {
 	case CLOSED:
@@ -1153,60 +1188,71 @@ void utcp_exit(struct utcp *utcp) {
 }
 
 uint16_t utcp_get_mtu(struct utcp *utcp) {
-	return utcp->mtu;
+	return utcp ? utcp->mtu : 0;
 }
 
 void utcp_set_mtu(struct utcp *utcp, uint16_t mtu) {
 	// TODO: handle overhead of the header
-	utcp->mtu = mtu;
+	if(utcp)
+		utcp->mtu = mtu;
 }
 
 int utcp_get_user_timeout(struct utcp *u) {
-	return u->timeout;
+	return u ? u->timeout : 0;
 }
 
 void utcp_set_user_timeout(struct utcp *u, int timeout) {
-	u->timeout = timeout;
+	if(u)
+		u->timeout = timeout;
 }
 
 size_t utcp_get_sndbuf(struct utcp_connection *c) {
-	return c->sndbuf.maxsize;
+	return c ? c->sndbuf.maxsize : 0;
 }
 
 size_t utcp_get_sndbuf_free(struct utcp_connection *c) {
-	return buffer_free(&c->sndbuf);
+	if(c && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
+		return buffer_free(&c->sndbuf);
+	else
+		return 0;
 }
 
 void utcp_set_sndbuf(struct utcp_connection *c, size_t size) {
+	if(!c)
+		return;
 	c->sndbuf.maxsize = size;
 	if(c->sndbuf.maxsize != size)
 		c->sndbuf.maxsize = -1;
 }
 
 bool utcp_get_nodelay(struct utcp_connection *c) {
-	return c->nodelay;
+	return c ? c->nodelay : false;
 }
 
 void utcp_set_nodelay(struct utcp_connection *c, bool nodelay) {
-	c->nodelay = nodelay;
+	if(c)
+		c->nodelay = nodelay;
 }
 
 bool utcp_get_keepalive(struct utcp_connection *c) {
-	return c->keepalive;
+	return c ? c->keepalive : false;
 }
 
 void utcp_set_keepalive(struct utcp_connection *c, bool keepalive) {
-	c->keepalive = keepalive;
+	if(c)
+		c->keepalive = keepalive;
 }
 
 size_t utcp_get_outq(struct utcp_connection *c) {
-	return seqdiff(c->snd.nxt, c->snd.una);
+	return c ? seqdiff(c->snd.nxt, c->snd.una) : 0;
 }
 
 void utcp_set_recv_cb(struct utcp_connection *c, utcp_recv_t recv) {
-	c->recv = recv;
+	if(c)
+		c->recv = recv;
 }
 
 void utcp_set_poll_cb(struct utcp_connection *c, utcp_poll_t poll) {
-	c->poll = poll;
+	if(c)
+		c->poll = poll;
 }
