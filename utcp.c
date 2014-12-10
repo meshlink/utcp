@@ -465,11 +465,8 @@ static void retransmit(struct utcp_connection *c) {
 	pkt->hdr.dst = c->dst;
 
 	switch(c->state) {
-		case LISTEN:
-			// TODO: this should not happen
-			break;
-
 		case SYN_SENT:
+			// Send our SYN again
 			pkt->hdr.seq = c->snd.iss;
 			pkt->hdr.ack = 0;
 			pkt->hdr.wnd = c->rcv.wnd;
@@ -479,6 +476,7 @@ static void retransmit(struct utcp_connection *c) {
 			break;
 
 		case SYN_RECEIVED:
+			// Send SYNACK again
 			pkt->hdr.seq = c->snd.nxt;
 			pkt->hdr.ack = c->rcv.nxt;
 			pkt->hdr.ctl = SYN | ACK;
@@ -488,28 +486,34 @@ static void retransmit(struct utcp_connection *c) {
 
 		case ESTABLISHED:
 		case FIN_WAIT_1:
+		case CLOSE_WAIT:
+		case CLOSING:
+		case LAST_ACK:
+			// Send unacked data again.
 			pkt->hdr.seq = c->snd.una;
 			pkt->hdr.ack = c->rcv.nxt;
 			pkt->hdr.ctl = ACK;
-			uint32_t len = seqdiff(c->snd.nxt, c->snd.una);
-			if(c->state == FIN_WAIT_1)
-				len--;
+			uint32_t len = seqdiff(c->snd.last, c->snd.una);
 			if(len > utcp->mtu)
 				len = utcp->mtu;
-			else {
-				if(c->state == FIN_WAIT_1)
-					pkt->hdr.ctl |= FIN;
+			if(fin_wanted(c, c->snd.una + len)) {
+				len--;
+				pkt->hdr.ctl |= FIN;
 			}
 			buffer_copy(&c->sndbuf, pkt->data, 0, len);
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
 			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
 			break;
 
-		default:
-			// TODO: implement
+		case CLOSED:
+		case LISTEN:
+		case TIME_WAIT:
+		case FIN_WAIT_2:
+			// We shouldn't need to retransmit anything in this state.
 #ifdef UTCP_DEBUG
 			abort();
 #endif
+			timerclear(&c->rtrx_timeout);
 			break;
 	}
 
