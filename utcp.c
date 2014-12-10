@@ -501,7 +501,10 @@ static void retransmit(struct utcp_connection *c) {
 
 		default:
 			// TODO: implement
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			break;
 	}
 
 	free(pkt);
@@ -623,7 +626,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	case TIME_WAIT:
 		break;
 	default:
+#ifdef UTCP_DEBUG
 		abort();
+#endif
+		break;
 	}
 
 	// 1b. Drop packets with a sequence number not in our receive window.
@@ -723,7 +729,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			set_state(c, CLOSED);
 			return 0;
 		default:
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			break;
 		}
 	}
 
@@ -822,7 +831,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			// Ehm, no. We should never receive a second SYN.
 			goto reset;
 		default:
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			return 0;
 		}
 
 		// SYN counts as one sequence number
@@ -852,7 +864,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case SYN_SENT:
 		case SYN_RECEIVED:
 			// This should never happen.
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			return 0;
 		case ESTABLISHED:
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
@@ -864,7 +879,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			// Ehm no, We should never receive more data after a FIN.
 			goto reset;
 		default:
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			return 0;
 		}
 
 		ssize_t rxd;
@@ -893,7 +911,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case SYN_SENT:
 		case SYN_RECEIVED:
 			// This should never happen.
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			break;
 		case ESTABLISHED:
 			set_state(c, CLOSE_WAIT);
 			break;
@@ -912,7 +933,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			// Ehm, no. We should never receive a second FIN.
 			goto reset;
 		default:
+#ifdef UTCP_DEBUG
 			abort();
+#endif
+			break;
 		}
 
 		// FIN counts as one sequence number
