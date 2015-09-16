@@ -132,7 +132,7 @@ int main(int argc, char *argv[]) {
 			if(c) {
 				ssize_t sent = utcp_send(c, buf, len);
 				if(sent != len)
-					fprintf(stderr, "PANIEK: %zd != %zd\n", sent, len);
+					fprintf(stderr, "PANIEK: " PRINT_SSIZE_T " != " PRINT_SSIZE_T "\n", sent, len);
 			}
 		}
 

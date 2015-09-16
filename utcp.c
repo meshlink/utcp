@@ -26,9 +26,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#else
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/socket.h>
+#endif
 
 #include "utcp_priv.h"
 
@@ -66,12 +71,12 @@ static void debug(const char *format, ...) {
 static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, size_t len) {
 	struct hdr hdr;
 	if(len < sizeof hdr) {
-		debug("%p %s: short packet (%zu bytes)\n", utcp, dir, len);
+		debug("%p %s: short packet (" PRINT_SIZE_T " bytes)\n", utcp, dir, len);
 		return;
 	}
 
 	memcpy(&hdr, pkt, sizeof hdr);
-	fprintf (stderr, "%p %s: len=%zu, src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
+	fprintf (stderr, "%p %s: len=" PRINT_SIZE_T ", src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
 	if(hdr.ctl & SYN)
 		debug("SYN");
 	if(hdr.ctl & RST)
@@ -671,7 +676,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 #endif
 
 	if(!acceptable) {
-		debug("Packet not acceptable, %u <= %u + %zu < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
+		debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
 		// Ignore unacceptable RST packets.
 		if(hdr.ctl & RST)
 			return 0;

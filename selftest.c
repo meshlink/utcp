@@ -85,7 +85,7 @@ int main(int argc, char *argv[]) {
 		if(len < 0)
 			fprintf(stderr, "Error: %s\n", strerror(errno));
 		else
-			fprintf(stderr, "Short write %zd!\n", len);
+			fprintf(stderr, "Short write " PRINT_SSIZE_T "!\n", len);
 	}
 	len = utcp_send(c, "This is a test.\n", 16);
 
@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
 		if(len < 0)
 			fprintf(stderr, "Error: %s\n", strerror(errno));
 		else
-			fprintf(stderr, "Short write %zd!\n", len);
+			fprintf(stderr, "Short write " PRINT_SSIZE_T "!\n", len);
 	}
 
 	fprintf(stderr, "closing...\n");
@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
 
 	len = utcp_send(c, buf, sizeof buf);
 	if(len != 10240)
-		fprintf(stderr, "Error: utcp_send() returned %zd, expected 10240\n", len);
+		fprintf(stderr, "Error: utcp_send() returned " PRINT_SSIZE_T ", expected 10240\n", len);
 
 	fprintf(stderr, "closing...\n");
 	utcp_close(c);
