@@ -27,12 +27,6 @@
 #include <stdbool.h>
 #include <string.h>
 
-#ifndef _WIN32
-#include <unistd.h>
-#include <sys/time.h>
-#include <sys/socket.h>
-#endif
-
 #include "utcp_priv.h"
 
 #ifndef EBADMSG

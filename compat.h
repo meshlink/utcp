@@ -8,7 +8,9 @@
 #ifdef _WIN32
   #include <winsock2.h>
 #else
+  #include <unistd.h>
   #include <sys/time.h>
+  #include <sys/socket.h>
 #endif
 
 #ifndef PRINT_SIZE_T

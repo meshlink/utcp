@@ -5,7 +5,7 @@ BIN = selftest test
 
 all: $(BIN)
 
-utcp.o: utcp.c compat.h utcp.h utcp_priv.h
+utcp.o: utcp.c
 
 test: utcp.o test.c
 
