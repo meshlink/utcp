@@ -27,9 +27,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#else
+#ifndef _WIN32
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/socket.h>

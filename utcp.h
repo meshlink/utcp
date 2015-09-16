@@ -23,7 +23,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// TODO: Windows
 #include "compat.h"
 
 #ifndef UTCP_INTERNAL
