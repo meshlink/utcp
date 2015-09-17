@@ -20,11 +20,10 @@
 #ifndef UTCP_H
 #define UTCP_H
 
-#include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
-// TODO: Windows
-#include <sys/time.h>
+
+#include "compat.h"
 
 #ifndef UTCP_INTERNAL
 struct utcp {
