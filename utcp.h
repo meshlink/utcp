@@ -40,6 +40,10 @@ struct utcp;
 struct utcp_connection;
 #endif
 
+#define UTCP_SHUT_RD 0
+#define UTCP_SHUT_WR 1
+#define UTCP_SHUT_RDWR 2
+
 typedef bool (*utcp_pre_accept_t)(struct utcp *utcp, uint16_t port);
 typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, uint16_t port);
 
