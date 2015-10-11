@@ -27,14 +27,24 @@ long dropto;
 double dropin;
 double dropout;
 
+void debug(const char *format, ...) {
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	fprintf(stderr, "%lu.%lu ", now.tv_sec, now.tv_usec / 1000);
+	va_list ap;
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
+}
+
 ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 	if(!data || !len) {
 		if(errno) {
-			fprintf(stderr, "Error: %s\n", strerror(errno));
+			debug("Error: %s\n", strerror(errno));
 			dir = 0;
 		} else {
 			dir &= ~DIR_WRITE;
-			fprintf(stderr, "Connection closed by peer\n");
+			debug("Connection closed by peer\n");
 		}
 		return -1;
 	}
@@ -55,7 +65,7 @@ ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 
 	ssize_t result = send(s, data, len, MSG_DONTWAIT);
 	if(result <= 0)
-		fprintf(stderr, "Error sending UDP packet: %s\n", strerror(errno));
+		debug("Error sending UDP packet: %s\n", strerror(errno));
 	return result;
 }
 
@@ -118,6 +128,7 @@ int main(int argc, char *argv[]) {
 	struct timeval timeout = utcp_timeout(u);
 
 	while(!connected || utcp_is_active(u)) {
+		debug("\n");
 		size_t max = c ? utcp_get_sndbuf_free(c) : 0;
 		if(max > sizeof buf)
 			max = sizeof buf;
@@ -129,7 +140,7 @@ int main(int argc, char *argv[]) {
 
 		if(fds[0].revents) {
 			fds[0].revents = 0;
-			fprintf(stderr, "0");
+			debug("stdin");
 			ssize_t len = read(0, buf, max);
 			if(len <= 0) {
 				fds[0].fd = -1;
@@ -144,18 +155,18 @@ int main(int argc, char *argv[]) {
 			if(c) {
 				ssize_t sent = utcp_send(c, buf, len);
 				if(sent != len)
-					fprintf(stderr, "PANIEK: %zd != %zd\n", sent, len);
+					debug("Short send: %zd != %zd\n", sent, len);
 			}
 		}
 
 		if(fds[1].revents) {
 			fds[1].revents = 0;
-			fprintf(stderr, "1");
+			debug("netout\n");
 			struct sockaddr_storage ss;
 			socklen_t sl = sizeof ss;
 			int len = recvfrom(s, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&ss, &sl);
 			if(len <= 0) {
-				fprintf(stderr, "Error receiving UDP packet: %s\n", strerror(errno));
+				debug("Error receiving UDP packet: %s\n", strerror(errno));
 				break;
 			}
 			if(!connected)
