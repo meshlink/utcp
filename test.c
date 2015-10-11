@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 
 	int s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-	if(s < 0)
+	if(s == -1)
 		return 1;
 
 	if(server) {
@@ -124,7 +124,7 @@ int main(int argc, char *argv[]) {
 				dir &= ~1;
 				if(c)
 					utcp_shutdown(c, SHUT_WR);
-				if(len < 0)
+				if(len == -1)
 					break;
 				else
 					continue;
