@@ -487,19 +487,28 @@ static void retransmit(struct utcp_connection *c) {
 		case CLOSING:
 		case LAST_ACK:
 			// Send unacked data again.
-			pkt->hdr.seq = c->snd.una;
-			pkt->hdr.ack = c->rcv.nxt;
 			pkt->hdr.ctl = ACK;
-			uint32_t len = seqdiff(c->snd.last, c->snd.una);
-			if(len > utcp->mtu)
-				len = utcp->mtu;
-			if(fin_wanted(c, c->snd.una + len)) {
-				len--;
-				pkt->hdr.ctl |= FIN;
-			}
-			buffer_copy(&c->sndbuf, pkt->data, 0, len);
-			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
-			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
+			pkt->hdr.ack = c->rcv.nxt;
+			uint32_t segpos = c->snd.una;
+			do
+			{
+				pkt->hdr.seq = segpos;
+				uint32_t seglen = seqdiff(c->snd.last, segpos);
+				if(seglen > utcp->mtu)
+					seglen = utcp->mtu;
+
+				buffer_copy(&c->sndbuf, pkt->data, seqdiff(segpos, c->snd.una), seglen);
+
+				segpos += seglen;
+
+				if(seglen && fin_wanted(c, c->snd.nxt)) {
+					seglen--;
+					pkt->hdr.ctl |= FIN;
+				}
+
+				print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + seglen);
+				utcp->send(utcp, pkt, sizeof pkt->hdr + seglen);
+			} while(segpos < c->snd.last);
 			break;
 
 		case CLOSED:
@@ -669,8 +678,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(!acceptable) {
 		debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
-		// Ignore unacceptable RST packets.
-		if(hdr.ctl & RST)
+		// Ignore unacceptable RST and ACK packets.
+		if(hdr.ctl & RST || hdr.ctl & ACK)
 			return 0;
 		// Otherwise, send an ACK back in the hope things improve.
 		ack(c, true);
