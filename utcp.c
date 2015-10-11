@@ -1256,3 +1256,10 @@ void utcp_set_poll_cb(struct utcp_connection *c, utcp_poll_t poll) {
 	if(c)
 		c->poll = poll;
 }
+
+void utcp_set_accept_cb(struct utcp *utcp, utcp_accept_t accept, utcp_pre_accept_t pre_accept) {
+	if(utcp) {
+		utcp->accept = accept;
+		utcp->pre_accept = pre_accept;
+	}
+}
