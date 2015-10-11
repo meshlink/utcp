@@ -109,7 +109,7 @@ int main(int argc, char *argv[]) {
 	char buf[102400];
 	struct timeval timeout = utcp_timeout(u);
 
-	while(dir) {
+	while(!connected || utcp_is_active(u)) {
 		size_t max = c ? utcp_get_sndbuf_free(c) : 0;
 		if(max > sizeof buf)
 			max = sizeof buf;
