@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <time.h>
 #include <errno.h>
@@ -18,6 +19,10 @@
 struct utcp_connection *c;
 int dir = DIR_READ | DIR_WRITE;
 bool running = true;
+long inpktno;
+long outpktno;
+long dropfrom;
+long dropto;
 double dropin;
 double dropout;
 
@@ -43,7 +48,8 @@ void do_accept(struct utcp_connection *nc, uint16_t port) {
 
 ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
-	if(drand48() < dropout)
+	outpktno++;
+	if(outpktno < dropto && outpktno >= dropfrom && drand48() < dropout)
 		return len;
 
 	ssize_t result = send(s, data, len, MSG_DONTWAIT);
@@ -64,6 +70,8 @@ int main(int argc, char *argv[]) {
 
 	dropin = atof(getenv("DROPIN") ?: "0");
 	dropout = atof(getenv("DROPOUT") ?: "0");
+	dropfrom = atoi(getenv("DROPFROM") ?: "0");
+	dropto = atoi(getenv("DROPTO") ?: "0");
 
 	struct addrinfo *ai;
 	struct addrinfo hint = {
@@ -152,7 +160,8 @@ int main(int argc, char *argv[]) {
 			if(!connected)
 				if(!connect(s, (struct sockaddr *)&ss, sl))
 					connected = true;
-			if(drand48() >= dropin)
+			inpktno++;
+			if(inpktno >= dropto || inpktno < dropfrom || drand48() >= dropin)
 				utcp_recv(u, buf, len);
 		}
 
