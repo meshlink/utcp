@@ -988,7 +988,7 @@ reset:
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
-	debug("%p shutdown %d at %u\n", c ? c->utcp : NULL, dir, c->snd.last);
+	debug("%p shutdown %d at %u\n", c ? c->utcp : NULL, dir, c ? c->snd.last : 0);
 	if(!c) {
 		errno = EFAULT;
 		return -1;
