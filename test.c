@@ -12,8 +12,11 @@
 
 #include "utcp.h"
 
+#define DIR_READ 1
+#define DIR_WRITE 2
+
 struct utcp_connection *c;
-int dir = 3;
+int dir = DIR_READ | DIR_WRITE;
 bool running = true;
 double dropin;
 double dropout;
@@ -24,7 +27,7 @@ ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 			fprintf(stderr, "Error: %s\n", strerror(errno));
 			dir = 0;
 		} else {
-			dir &= ~2;
+			dir &= ~DIR_WRITE;
 			fprintf(stderr, "Connection closed by peer\n");
 		}
 		return -1;
@@ -109,7 +112,7 @@ int main(int argc, char *argv[]) {
 		if(max > sizeof buf)
 			max = sizeof buf;
 
-		if((dir & 1) && max)
+		if((dir & DIR_READ) && max)
 			poll(fds, 2, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
 		else
 			poll(fds + 1, 1, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
@@ -120,7 +123,7 @@ int main(int argc, char *argv[]) {
 			ssize_t len = read(0, buf, max);
 			if(len <= 0) {
 				fds[0].fd = -1;
-				dir &= ~1;
+				dir &= ~DIR_READ;
 				if(c)
 					utcp_shutdown(c, SHUT_WR);
 				if(len == -1)
