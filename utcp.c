@@ -497,6 +497,7 @@ static void retransmit(struct utcp_connection *c) {
 				len--;
 				pkt->hdr.ctl |= FIN;
 			}
+			c->snd.nxt = c->snd.una + len;
 			buffer_copy(&c->sndbuf, pkt->data, 0, len);
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
 			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
