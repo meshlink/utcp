@@ -997,13 +997,26 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 		return -1;
 	}
 
-	// TODO: handle dir
-	// TODO: check that repeated calls with the same parameters should have no effect
+	if(!(dir == UTCP_SHUT_RD || dir == UTCP_SHUT_WR || dir == UTCP_SHUT_RDWR)) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	// TCP does not have a provision for stopping incoming packets.
+	// The best we can do is to just ignore them.
+	if(dir == UTCP_SHUT_RD || dir == UTCP_SHUT_RDWR)
+		c->recv = NULL;
+
+	// The rest of the code deals with shutting down writes.
+	if(dir == UTCP_SHUT_RD)
+		return 0;
 
 	switch(c->state) {
 	case CLOSED:
-		return 0;
 	case LISTEN:
+		errno = ENOTCONN;
+		return -1;
+
 	case SYN_SENT:
 		set_state(c, CLOSED);
 		return 0;
