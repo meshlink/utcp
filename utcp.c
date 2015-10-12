@@ -369,9 +369,8 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
 	do {
 		uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
+		uint32_t bufpos = seqdiff(c->snd.nxt, c->snd.una);
 		pkt->hdr.seq = c->snd.nxt;
-
-		buffer_copy(&c->sndbuf, pkt->data, seqdiff(c->snd.nxt, c->snd.una), seglen);
 
 		c->snd.nxt += seglen;
 		left -= seglen;
@@ -380,6 +379,8 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 			seglen--;
 			pkt->hdr.ctl |= FIN;
 		}
+
+		buffer_copy(&c->sndbuf, pkt->data, bufpos, seglen);
 
 		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
 		c->utcp->send(c->utcp, pkt, sizeof pkt->hdr + seglen);
@@ -497,14 +498,15 @@ static void retransmit(struct utcp_connection *c) {
 				if(seglen > utcp->mtu)
 					seglen = utcp->mtu;
 
-				buffer_copy(&c->sndbuf, pkt->data, seqdiff(segpos, c->snd.una), seglen);
-
+				uint32_t bufpos = seqdiff(segpos, c->snd.una);
 				segpos += seglen;
 
 				if(seglen && fin_wanted(c, c->snd.nxt)) {
 					seglen--;
 					pkt->hdr.ctl |= FIN;
 				}
+
+				buffer_copy(&c->sndbuf, pkt->data, bufpos, seglen);
 
 				print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + seglen);
 				utcp->send(utcp, pkt, sizeof pkt->hdr + seglen);
@@ -679,7 +681,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	if(!acceptable) {
 		debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
 		// Ignore unacceptable RST and ACK packets.
-		if(hdr.ctl & RST || hdr.ctl & ACK)
+		if(hdr.ctl & RST || (!len && hdr.ctl & ACK))
 			return 0;
 		// Otherwise, send an ACK back in the hope things improve.
 		ack(c, true);
