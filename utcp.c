@@ -641,10 +641,12 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	}
 
 	// 1b. Drop packets with an invalid ACK.
-	// ackno should not roll back, and it should also not be bigger than snd.nxt.
+	// ackno should not roll back, and it should also not be bigger than snd.last,
+	// but it might be bigger than snd.nxt since we reset snd.nxt in retransmit and on triplicate ack.
 
-	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.nxt) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
-		debug("Packet ack seqno out of range, %u %u %u\n", hdr.ack, c->snd.una, c->snd.nxt);
+	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.last) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
+		debug("Packet ack seqno out of range: hdr.ack=%u snd.una=%u snd.nxt=%u snd.last=%u\n",
+			hdr.ack, c->snd.una, c->snd.nxt, c->snd.last);
 		// Ignore unacceptable RST packets.
 		if(hdr.ctl & RST)
 			return 0;
