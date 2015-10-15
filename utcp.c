@@ -488,6 +488,8 @@ static void retransmit(struct utcp_connection *c) {
 		case CLOSING:
 		case LAST_ACK:
 			// Send unacked data again.
+			pkt->hdr.seq = c->snd.una;
+			pkt->hdr.ack = c->rcv.nxt;
 			pkt->hdr.ctl = ACK;
 			uint32_t len = seqdiff(c->snd.last, c->snd.una);
 			if(len > utcp->mtu)
