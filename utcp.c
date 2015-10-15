@@ -617,8 +617,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	// It is for an existing connection.
 
-	uint32_t prevrcvnxt = c->rcv.nxt;
-
 	// 1. Drop invalid packets.
 
 	// 1a. Drop packets that should not happen in our current state.
@@ -641,7 +639,87 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		break;
 	}
 
-	// 1b. Drop packets with a sequence number not in our receive window.
+	// 1b. Drop packets with an invalid ACK.
+	// ackno should not roll back, and it should also not be bigger than snd.nxt.
+
+	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.nxt) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
+		debug("Packet ack seqno out of range, %u %u %u\n", hdr.ack, c->snd.una, c->snd.nxt);
+		// Ignore unacceptable RST packets.
+		if(hdr.ctl & RST)
+			return 0;
+		goto reset;
+	}
+
+	c->snd.wnd = hdr.wnd; // TODO: move below
+
+	// 2. Advance snd.una also when hdr.seq doesn't match
+
+	uint32_t prevrcvnxt = c->rcv.nxt;
+
+	if(hdr.ctl & ACK)
+	{
+		uint32_t advanced = seqdiff(hdr.ack, c->snd.una);
+
+		if(advanced) {
+			int32_t data_acked = advanced;
+
+			switch(c->state) {
+				case SYN_SENT:
+				case SYN_RECEIVED:
+					data_acked--;
+					break;
+				// TODO: handle FIN as well.
+				default:
+					break;
+			}
+
+			assert(data_acked >= 0);
+
+			int32_t bufused = seqdiff(c->snd.last, c->snd.una);
+			assert(data_acked <= bufused);
+
+			if(data_acked)
+				buffer_get(&c->sndbuf, NULL, data_acked);
+
+			c->snd.una = hdr.ack;
+
+			c->dupack = 0;
+			c->snd.cwnd += utcp->mtu;
+			if(c->snd.cwnd > c->sndbuf.maxsize)
+				c->snd.cwnd = c->sndbuf.maxsize;
+
+			// Check if we have sent a FIN that is now ACKed.
+			switch(c->state) {
+			case FIN_WAIT_1:
+				if(c->snd.una == c->snd.last)
+					set_state(c, FIN_WAIT_2);
+				break;
+			case CLOSING:
+				if(c->snd.una == c->snd.last) {
+					gettimeofday(&c->conn_timeout, NULL);
+					c->conn_timeout.tv_sec += 60;
+					set_state(c, TIME_WAIT);
+				}
+				break;
+			default:
+				break;
+			}
+		} else {
+			if(!len) {
+				c->dupack++;
+				if(c->dupack == 3) {
+					debug("Triplicate ACK\n");
+					//TODO: Resend one packet and go to fast recovery mode. See RFC 6582.
+					//We do a very simple variant here; reset the nxt pointer to the last acknowledged packet from the peer.
+					//This will cause us to start retransmitting, but at the same speed as the incoming ACKs arrive,
+					//thus preventing a drop in speed.
+					c->snd.nxt = c->snd.una;
+				}
+			}
+		}
+	}
+
+	// 3. Check incoming data for acceptable seqno
 
 	bool acceptable;
 
@@ -669,6 +747,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		acceptable = hdr.seq == c->rcv.nxt;
 #endif
 
+	// Drop unacceptable packets
+	// seqno rolls back on retransmit, so possibly a previous ack got dropped
+
 	if(!acceptable) {
 		debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
 		// Ignore unacceptable RST and ACK packets.
@@ -679,20 +760,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return 0;
 	}
 
-	c->snd.wnd = hdr.wnd; // TODO: move below
-
-	// 1c. Drop packets with an invalid ACK.
-	// ackno should not roll back, and it should also not be bigger than snd.nxt.
-
-	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.nxt) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
-		debug("Packet ack seqno out of range, %u %u %u\n", hdr.ack, c->snd.una, c->snd.nxt);
-		// Ignore unacceptable RST packets.
-		if(hdr.ctl & RST)
-			return 0;
-		goto reset;
-	}
-
-	// 2. Handle RST packets
+	// 4. Handle RST packets
 
 	if(hdr.ctl & RST) {
 		switch(c->state) {
@@ -745,70 +813,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
-	// 3. Advance snd.una
-
-	uint32_t advanced = seqdiff(hdr.ack, c->snd.una);
-	prevrcvnxt = c->rcv.nxt;
-
-	if(advanced) {
-		int32_t data_acked = advanced;
-
-		switch(c->state) {
-			case SYN_SENT:
-			case SYN_RECEIVED:
-				data_acked--;
-				break;
-			// TODO: handle FIN as well.
-			default:
-				break;
-		}
-
-		assert(data_acked >= 0);
-
-		int32_t bufused = seqdiff(c->snd.last, c->snd.una);
-		assert(data_acked <= bufused);
-
-		if(data_acked)
-			buffer_get(&c->sndbuf, NULL, data_acked);
-
-		c->snd.una = hdr.ack;
-
-		c->dupack = 0;
-		c->snd.cwnd += utcp->mtu;
-		if(c->snd.cwnd > c->sndbuf.maxsize)
-			c->snd.cwnd = c->sndbuf.maxsize;
-
-		// Check if we have sent a FIN that is now ACKed.
-		switch(c->state) {
-		case FIN_WAIT_1:
-			if(c->snd.una == c->snd.last)
-				set_state(c, FIN_WAIT_2);
-			break;
-		case CLOSING:
-			if(c->snd.una == c->snd.last) {
-				gettimeofday(&c->conn_timeout, NULL);
-				c->conn_timeout.tv_sec += 60;
-				set_state(c, TIME_WAIT);
-			}
-			break;
-		default:
-			break;
-		}
-	} else {
-		if(!len) {
-			c->dupack++;
-			if(c->dupack == 3) {
-				debug("Triplicate ACK\n");
-				//TODO: Resend one packet and go to fast recovery mode. See RFC 6582.
-				//We do a very simple variant here; reset the nxt pointer to the last acknowledged packet from the peer.
-				//This will cause us to start retransmitting, but at the same speed as the incoming ACKs arrive,
-				//thus preventing a drop in speed.
-				c->snd.nxt = c->snd.una;
-			}
-		}
-	}
-
-	// 4. Update timers
+	// 5. Update timers
 
 	if(advanced) {
 		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
@@ -816,7 +821,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			timerclear(&c->rtrx_timeout);
 	}
 
-	// 5. Process SYN stuff
+	// 6. Process SYN stuff
 
 	if(hdr.ctl & SYN) {
 		switch(c->state) {
@@ -850,7 +855,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		c->rcv.nxt++;
 	}
 
-	// 6. Process new data
+	// 7. Process new data
 
 	if(c->state == SYN_RECEIVED) {
 		// This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
@@ -913,7 +918,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		c->rcv.nxt += len;
 	}
 
-	// 7. Process FIN stuff
+	// 8. Process FIN stuff
 
 	if(hdr.ctl & FIN) {
 		switch(c->state) {
