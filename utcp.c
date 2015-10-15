@@ -762,10 +762,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(!acceptable) {
 		debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcv.wnd);
-		// Ignore unacceptable RST and ACK packets.
-		if(hdr.ctl & RST || (!len && hdr.ctl & ACK))
+		// Ignore unacceptable RST packets.
+		if(hdr.ctl & RST)
 			return 0;
 		// Otherwise, send an ACK back in the hope things improve.
+		// needed to trigger the triple ack and reset the sender's seqno
 		ack(c, true);
 		return 0;
 	}
