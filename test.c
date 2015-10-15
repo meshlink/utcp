@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <time.h>
 #include <errno.h>
@@ -12,20 +13,37 @@
 
 #include "utcp.h"
 
+#define DIR_READ 1
+#define DIR_WRITE 2
+
 struct utcp_connection *c;
-int dir = 3;
+int dir = DIR_READ | DIR_WRITE;
 bool running = true;
+long inpktno;
+long outpktno;
+long dropfrom;
+long dropto;
 double dropin;
 double dropout;
+
+void debug(const char *format, ...) {
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	fprintf(stderr, "%lu.%lu ", now.tv_sec, now.tv_usec / 1000);
+	va_list ap;
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
+}
 
 ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 	if(!data || !len) {
 		if(errno) {
-			fprintf(stderr, "Error: %s\n", strerror(errno));
+			debug("Error: %s\n", strerror(errno));
 			dir = 0;
 		} else {
-			dir &= ~2;
-			fprintf(stderr, "Connection closed by peer\n");
+			dir &= ~DIR_WRITE;
+			debug("Connection closed by peer\n");
 		}
 		return -1;
 	}
@@ -35,16 +53,18 @@ ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 void do_accept(struct utcp_connection *nc, uint16_t port) {
 	utcp_accept(nc, do_recv, NULL);
 	c = nc;
+	utcp_set_accept_cb(c->utcp, NULL, NULL);
 }
 
 ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
-	if(drand48() < dropout)
+	outpktno++;
+	if(outpktno < dropto && outpktno >= dropfrom && drand48() < dropout)
 		return len;
 
 	ssize_t result = send(s, data, len, MSG_DONTWAIT);
 	if(result <= 0)
-		fprintf(stderr, "Error sending UDP packet: %s\n", strerror(errno));
+		debug("Error sending UDP packet: %s\n", strerror(errno));
 	return result;
 }
 
@@ -60,6 +80,8 @@ int main(int argc, char *argv[]) {
 
 	dropin = atof(getenv("DROPIN") ?: "0");
 	dropout = atof(getenv("DROPOUT") ?: "0");
+	dropfrom = atoi(getenv("DROPFROM") ?: "0");
+	dropto = atoi(getenv("DROPTO") ?: "0");
 
 	struct addrinfo *ai;
 	struct addrinfo hint = {
@@ -72,7 +94,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 
 	int s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-	if(s < 0)
+	if(s == -1)
 		return 1;
 
 	if(server) {
@@ -104,26 +126,27 @@ int main(int argc, char *argv[]) {
 	char buf[102400];
 	struct timeval timeout = utcp_timeout(u);
 
-	while(dir) {
+	while(!connected || utcp_is_active(u)) {
+		debug("\n");
 		size_t max = c ? utcp_get_sndbuf_free(c) : 0;
 		if(max > sizeof buf)
 			max = sizeof buf;
 
-		if((dir & 1) && max)
+		if((dir & DIR_READ) && max)
 			poll(fds, 2, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
 		else
 			poll(fds + 1, 1, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
 
 		if(fds[0].revents) {
 			fds[0].revents = 0;
-			fprintf(stderr, "0");
+			debug("stdin");
 			ssize_t len = read(0, buf, max);
 			if(len <= 0) {
 				fds[0].fd = -1;
-				dir &= ~1;
+				dir &= ~DIR_READ;
 				if(c)
 					utcp_shutdown(c, SHUT_WR);
-				if(len < 0)
+				if(len == -1)
 					break;
 				else
 					continue;
@@ -131,24 +154,25 @@ int main(int argc, char *argv[]) {
 			if(c) {
 				ssize_t sent = utcp_send(c, buf, len);
 				if(sent != len)
-					fprintf(stderr, "PANIEK: " PRINT_SSIZE_T " != " PRINT_SSIZE_T "\n", sent, len);
+					debug("PANIEK: " PRINT_SSIZE_T " != " PRINT_SSIZE_T "\n", sent, len);
 			}
 		}
 
 		if(fds[1].revents) {
 			fds[1].revents = 0;
-			fprintf(stderr, "1");
+			debug("netout\n");
 			struct sockaddr_storage ss;
 			socklen_t sl = sizeof ss;
 			int len = recvfrom(s, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&ss, &sl);
 			if(len <= 0) {
-				fprintf(stderr, "Error receiving UDP packet: %s\n", strerror(errno));
+				debug("Error receiving UDP packet: %s\n", strerror(errno));
 				break;
 			}
 			if(!connected)
 				if(!connect(s, (struct sockaddr *)&ss, sl))
 					connected = true;
-			if(drand48() >= dropin)
+			inpktno++;
+			if(inpktno >= dropto || inpktno < dropfrom || drand48() >= dropin)
 				utcp_recv(u, buf, len);
 		}
 

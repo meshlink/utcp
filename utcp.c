@@ -489,28 +489,17 @@ static void retransmit(struct utcp_connection *c) {
 		case LAST_ACK:
 			// Send unacked data again.
 			pkt->hdr.ctl = ACK;
-			pkt->hdr.ack = c->rcv.nxt;
-			uint32_t segpos = c->snd.una;
-			do
-			{
-				pkt->hdr.seq = segpos;
-				uint32_t seglen = seqdiff(c->snd.last, segpos);
-				if(seglen > utcp->mtu)
-					seglen = utcp->mtu;
-
-				uint32_t bufpos = seqdiff(segpos, c->snd.una);
-				segpos += seglen;
-
-				if(seglen && fin_wanted(c, c->snd.nxt)) {
-					seglen--;
-					pkt->hdr.ctl |= FIN;
-				}
-
-				buffer_copy(&c->sndbuf, pkt->data, bufpos, seglen);
-
-				print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + seglen);
-				utcp->send(utcp, pkt, sizeof pkt->hdr + seglen);
-			} while(segpos < c->snd.last);
+			uint32_t len = seqdiff(c->snd.last, c->snd.una);
+			if(len > utcp->mtu)
+				len = utcp->mtu;
+			if(fin_wanted(c, c->snd.una + len)) {
+				len--;
+				pkt->hdr.ctl |= FIN;
+			}
+			c->snd.nxt = c->snd.una + len;
+			buffer_copy(&c->sndbuf, pkt->data, 0, len);
+			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
+			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
 			break;
 
 		case CLOSED:
@@ -996,7 +985,7 @@ reset:
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
-	debug("%p shutdown %d at %u\n", c ? c->utcp : NULL, dir, c->snd.last);
+	debug("%p shutdown %d at %u\n", c ? c->utcp : NULL, dir, c ? c->snd.last : 0);
 	if(!c) {
 		errno = EFAULT;
 		return -1;
@@ -1008,13 +997,26 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 		return -1;
 	}
 
-	// TODO: handle dir
-	// TODO: check that repeated calls with the same parameters should have no effect
+	if(!(dir == UTCP_SHUT_RD || dir == UTCP_SHUT_WR || dir == UTCP_SHUT_RDWR)) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	// TCP does not have a provision for stopping incoming packets.
+	// The best we can do is to just ignore them.
+	if(dir == UTCP_SHUT_RD || dir == UTCP_SHUT_RDWR)
+		c->recv = NULL;
+
+	// The rest of the code deals with shutting down writes.
+	if(dir == UTCP_SHUT_RD)
+		return 0;
 
 	switch(c->state) {
 	case CLOSED:
-		return 0;
 	case LISTEN:
+		errno = ENOTCONN;
+		return -1;
+
 	case SYN_SENT:
 		set_state(c, CLOSED);
 		return 0;
@@ -1162,6 +1164,17 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 	return diff;
 }
 
+bool utcp_is_active(struct utcp *utcp) {
+	if(!utcp)
+		return false;
+
+	for(int i = 0; i < utcp->nconnections; i++)
+		if(utcp->connections[i]->state != CLOSED && utcp->connections[i]->state != TIME_WAIT)
+			return true;
+
+	return false;
+}
+
 struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv) {
 	struct utcp *utcp = calloc(1, sizeof *utcp);
 	if(!utcp)
@@ -1263,4 +1276,11 @@ void utcp_set_recv_cb(struct utcp_connection *c, utcp_recv_t recv) {
 void utcp_set_poll_cb(struct utcp_connection *c, utcp_poll_t poll) {
 	if(c)
 		c->poll = poll;
+}
+
+void utcp_set_accept_cb(struct utcp *utcp, utcp_accept_t accept, utcp_pre_accept_t pre_accept) {
+	if(utcp) {
+		utcp->accept = accept;
+		utcp->pre_accept = pre_accept;
+	}
 }

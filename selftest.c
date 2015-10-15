@@ -82,7 +82,7 @@ int main(int argc, char *argv[]) {
 	ssize_t len = utcp_send(c, "Hello world!\n", 13);
 
 	if(len != 13) {
-		if(len < 0)
+		if(len == -1)
 			fprintf(stderr, "Error: %s\n", strerror(errno));
 		else
 			fprintf(stderr, "Short write " PRINT_SSIZE_T "!\n", len);
@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
 	len = utcp_send(c, "This is a test.\n", 16);
 
 	if(len != 16) {
-		if(len < 0)
+		if(len == -1)
 			fprintf(stderr, "Error: %s\n", strerror(errno));
 		else
 			fprintf(stderr, "Short write " PRINT_SSIZE_T "!\n", len);
