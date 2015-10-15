@@ -83,11 +83,24 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 		debug("ACK");
 
 	if(len > sizeof hdr) {
-		debug(" data=");
-		for(int i = sizeof hdr; i < len; i++) {
-			const char *data = pkt;
-			debug("%c", data[i] >= 32 ? data[i] : '.');
+		uint32_t datalen = len - sizeof hdr;
+		uint8_t *str = malloc((datalen << 1) + 7);
+		memcpy(str, " data=", 6);
+		uint8_t *strptr = str + 6;
+		const uint8_t *data = pkt;
+		const uint8_t *dataend = data + datalen;
+
+		while(data != dataend) {
+			*strptr = (*data >> 4) > 9? (*data >> 4) + 55 : (*data >> 4) + 48;
+			++strptr;
+			*strptr = (*data & 0xf) > 9? (*data & 0xf) + 55 : (*data & 0xf) + 48;
+			++strptr;
+			++data;
 		}
+		*strptr = 0;
+
+		debug(str);
+		free(str);
 	}
 
 	debug("\n");
