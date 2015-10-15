@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "utcp_priv.h"
 
@@ -655,10 +656,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// 2. Advance snd.una also when hdr.seq doesn't match
 
 	uint32_t prevrcvnxt = c->rcv.nxt;
+	uint32_t advanced = 0;
 
 	if(hdr.ctl & ACK)
 	{
-		uint32_t advanced = seqdiff(hdr.ack, c->snd.una);
+		advanced = seqdiff(hdr.ack, c->snd.una);
 
 		if(advanced) {
 			int32_t data_acked = advanced;
@@ -719,7 +721,15 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
-	// 3. Check incoming data for acceptable seqno
+	// 3. Update timers
+
+	if(advanced) {
+		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
+		if(c->snd.una == c->snd.nxt)
+			timerclear(&c->rtrx_timeout);
+	}
+
+	// 4. Check incoming data for acceptable seqno
 
 	bool acceptable;
 
@@ -760,7 +770,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return 0;
 	}
 
-	// 4. Handle RST packets
+	// 5. Handle RST packets
 
 	if(hdr.ctl & RST) {
 		switch(c->state) {
@@ -811,14 +821,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 #endif
 			break;
 		}
-	}
-
-	// 5. Update timers
-
-	if(advanced) {
-		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
-		if(c->snd.una == c->snd.nxt)
-			timerclear(&c->rtrx_timeout);
 	}
 
 	// 6. Process SYN stuff
