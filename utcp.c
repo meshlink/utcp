@@ -738,8 +738,13 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	// 3. Update retransmit timer
 
-	if(advanced)
-		timerclear(&c->rtrx_timeout); // Set in utcp_timeout() if c->snd.una != c->snd.nxt.
+	if(hdr.ctl & ACK)
+	{
+		// reset on progress, so data can be continously sent over the channel
+		// reset on empty response packets, to allow the sender to catch up on queued incoming unacceptable packets
+		if(advanced || !len)
+			timerclear(&c->rtrx_timeout); // Set in utcp_timeout() if c->snd.una != c->snd.nxt.
+	}
 
 	// 4. Check incoming data for acceptable seqno
 
@@ -1178,14 +1183,14 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 				if(c->snd.nxt != c->snd.una) {
 					retransmit(c);
 					c->rtrx_timeout = now;
-					c->rtrx_timeout.tv_sec++;
+					c->rtrx_timeout.tv_sec += 2;
 				} else {
 					timerclear(&c->rtrx_timeout);
 				}
 			}
 		} else if(c->snd.nxt != c->snd.una) {
 			c->rtrx_timeout = now;
-			c->rtrx_timeout.tv_sec++;
+			c->rtrx_timeout.tv_sec += 2;
 		}
 		if(timercmp(&c->rtrx_timeout, &next, <))
 			next = c->rtrx_timeout;
