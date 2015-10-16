@@ -1155,33 +1155,42 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 			continue;
 		}
 
-		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &now, <)) {
-			errno = ETIMEDOUT;
-			c->state = CLOSED;
-			if(c->recv)
-				c->recv(c, NULL, 0);
-			continue;
+		// check connection timeout
+		if(timerisset(&c->conn_timeout)) {
+			 if(timercmp(&c->conn_timeout, &now, <)) {
+				errno = ETIMEDOUT;
+				c->state = CLOSED;
+				if(c->recv)
+					c->recv(c, NULL, 0);
+				continue;
+			}
+		} else {
+			c->conn_timeout = now;
+			c->conn_timeout.tv_sec += utcp->timeout;
 		}
+		if(timercmp(&c->conn_timeout, &next, <))
+			next = c->conn_timeout;
 
-		if(timerisset(&c->rtrx_timeout) && timercmp(&c->rtrx_timeout, &now, <)) {
-			retransmit(c);
+		// check retransmit timeout
+		if(timerisset(&c->rtrx_timeout)) {
+			if(timercmp(&c->rtrx_timeout, &now, <)) {
+				if(c->snd.nxt != c->snd.una) {
+					retransmit(c);
+					c->rtrx_timeout = now;
+					c->rtrx_timeout.tv_sec++;
+				} else {
+					timerclear(&c->rtrx_timeout);
+				}
+			}
+		} else if(c->snd.nxt != c->snd.una) {
+			c->rtrx_timeout = now;
+			c->rtrx_timeout.tv_sec++;
 		}
+		if(timercmp(&c->rtrx_timeout, &next, <))
+			next = c->rtrx_timeout;
 
 		if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
 			c->poll(c, buffer_free(&c->sndbuf));
-
-		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <))
-			next = c->conn_timeout;
-
-		if(c->snd.nxt != c->snd.una) {
-			c->rtrx_timeout = now;
-			c->rtrx_timeout.tv_sec++;
-		} else {
-			timerclear(&c->rtrx_timeout);
-		}
-
-		if(timerisset(&c->rtrx_timeout) && timercmp(&c->rtrx_timeout, &next, <))
-			next = c->rtrx_timeout;
 	}
 
 	struct timeval diff;
