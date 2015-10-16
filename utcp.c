@@ -362,7 +362,9 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 	if(cwndleft < left)
 		left = cwndleft;
 
-	if(!left && !sendatleastone)
+	// limit packets in transit to avoid flooding
+	uint32_t net_limit = c->snd.una + 20000;
+	if((!left || c->snd.nxt > net_limit) && !sendatleastone)
 		return;
 
 	struct {
@@ -398,6 +400,10 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
 		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
 		c->utcp->send(c->utcp, pkt, sizeof pkt->hdr + seglen);
+
+		// limit packets in transit to avoid flooding
+		if(c->snd.nxt > net_limit)
+			break;
 	} while(left);
 
 	free(pkt);
