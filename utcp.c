@@ -736,13 +736,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
-	// 3. Update timers
+	// 3. Update retransmit timer
 
-	if(advanced) {
-		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
-		if(c->snd.una == c->snd.nxt)
-			timerclear(&c->rtrx_timeout);
-	}
+	if(advanced)
+		timerclear(&c->rtrx_timeout); // Set in utcp_timeout() if c->snd.una != c->snd.nxt.
 
 	// 4. Check incoming data for acceptable seqno
 
@@ -786,7 +783,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return 0;
 	}
 
-	// 5. Handle RST packets
+	// 5. Update connection timer
+
+	timerclear(&c->conn_timeout); // Set in utcp_timeout()
+
+	// 6. Handle RST packets
 
 	if(hdr.ctl & RST) {
 		switch(c->state) {
@@ -839,7 +840,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
-	// 6. Process SYN stuff
+	// 7. Process SYN stuff
 
 	if(hdr.ctl & SYN) {
 		switch(c->state) {
@@ -873,7 +874,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		c->rcv.nxt++;
 	}
 
-	// 7. Process new data
+	// 8. Process new data
 
 	if(c->state == SYN_RECEIVED) {
 		// This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
@@ -936,7 +937,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		c->rcv.nxt += len;
 	}
 
-	// 8. Process FIN stuff
+	// 9. Process FIN stuff
 
 	if(hdr.ctl & FIN) {
 		switch(c->state) {
