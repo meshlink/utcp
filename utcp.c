@@ -774,7 +774,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		else if(c->rcv.wnd == 0)
 			acceptable = rcv_offset == 0;
 		else
-			acceptable = rcv_offset - c->rcv.wnd < 0;
+			acceptable = (int32_t)(rcv_offset - c->rcv.wnd) < 0;
 	}
 
 	// Drop unacceptable packets
