@@ -763,7 +763,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 		// cut already accepted front overlapping
 		if(rcv_offset < 0) {
-			acceptable = rcv_offset + len >= 0;
+			acceptable = len >= -rcv_offset;
 			if(acceptable) {
 				data -= rcv_offset;
 				len += rcv_offset;
