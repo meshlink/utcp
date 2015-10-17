@@ -850,18 +850,22 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(c->state == SYN_SENT)
 		acceptable = true;
-
-	// TODO: handle packets overlapping c->rcv.nxt.
-#if 1
-	// Only use this when accepting out-of-order packets.
 	else if(len == 0)
 		acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0;
-	else
+	else {
+		int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
+
+		// cut already accepted front overlapping
+		if(rcv_offset < 0) {
+			acceptable = rcv_offset + len >= 0;
+			if(acceptable) {
+				data -= rcv_offset;
+				len += rcv_offset;
+			}
+		}
+
 		acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt) + len <= c->rcvbuf.maxsize;
-#else
-	if(c->state != SYN_SENT)
-		acceptable = hdr.seq == c->rcv.nxt;
-#endif
+	}
 
 	if(!acceptable) {
 		debug("Packet not acceptable, %u <= %u + %zu < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcvbuf.maxsize);
