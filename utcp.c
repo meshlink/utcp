@@ -352,19 +352,16 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 
 static void ack(struct utcp_connection *c, bool sendatleastone) {
 	int32_t left = seqdiff(c->snd.last, c->snd.nxt);
-	int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
-
 	assert(left >= 0);
 
+	// limit by congestion window increased by utcp->mtu on each advance
+	int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
 	if(cwndleft <= 0)
 		cwndleft = 0;
-
 	if(cwndleft < left)
 		left = cwndleft;
 
-	// limit packets in transit to avoid flooding
-	uint32_t net_limit = c->snd.una + 20000;
-	if((!left || c->snd.nxt > net_limit) && !sendatleastone)
+	if(!left && !sendatleastone)
 		return;
 
 	struct {
@@ -400,10 +397,6 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
 		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
 		c->utcp->send(c->utcp, pkt, sizeof pkt->hdr + seglen);
-
-		// limit packets in transit to avoid flooding
-		if(c->snd.nxt > net_limit)
-			break;
 	} while(left);
 
 	free(pkt);
@@ -707,7 +700,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			c->snd.una = hdr.ack;
 
 			c->dupack = 0;
-			c->snd.cwnd += utcp->mtu;
+
+			// adapt congestion window to limit packets sent and avoid flooding
+			// TODO: for an adaptive cwnd detection maybe test for increased processing time of a packet or for ack throughput over time
+			if(c->snd.cwnd < 10000)
+				c->snd.cwnd += utcp->mtu;
 			if(c->snd.cwnd > c->sndbuf.maxsize)
 				c->snd.cwnd = c->sndbuf.maxsize;
 
@@ -737,6 +734,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 					//This will cause us to start retransmitting, but at the same speed as the incoming ACKs arrive,
 					//thus preventing a drop in speed.
 					c->snd.nxt = c->snd.una;
+					// reset cwnd to adapt for network traffic
+					c->snd.cwnd = utcp->mtu;
 				}
 			}
 		}
@@ -1187,6 +1186,8 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 		if(timerisset(&c->rtrx_timeout)) {
 			if(timercmp(&c->rtrx_timeout, &now, <)) {
 				if(c->snd.nxt != c->snd.una) {
+					// reset cwnd to adapt for network traffic
+					c->snd.cwnd = utcp->mtu;
 					retransmit(c);
 					c->rtrx_timeout = now;
 					c->rtrx_timeout.tv_sec += 2;
