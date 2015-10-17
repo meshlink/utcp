@@ -296,7 +296,8 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	c->snd.iss = rand();
 	c->snd.una = c->snd.iss;
 	c->snd.nxt = c->snd.iss + 1;
-	c->rcv.wnd = utcp->mtu;
+	// TODO: c->rcv.wnd = utcp->mtu;
+	c->rcv.wnd = 0;
 	c->snd.last = c->snd.nxt;
 	c->snd.cwnd = utcp->mtu;
 	c->utcp = utcp;
@@ -757,27 +758,24 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(c->state == SYN_SENT)
 		acceptable = true;
+	else {
+		int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
 
-	// TODO: handle packets overlapping c->rcv.nxt.
-#if 0
-	// Only use this when accepting out-of-order packets.
-	else if(len == 0)
-		if(c->rcv.wnd == 0)
-			acceptable = hdr.seq == c->rcv.nxt;
+		// cut already accepted front overlapping
+		if(rcv_offset < 0) {
+			acceptable = rcv_offset + len >= 0;
+			if(acceptable) {
+				data -= rcv_offset;
+				len += rcv_offset;
+			}
+		}
+		// Set c->rcv.wnd to accept out-of-order packets.
+		// packets must be within the receive window, accept overlapping packets
+		else if(c->rcv.wnd == 0)
+			acceptable = rcv_offset == 0;
 		else
-			acceptable = (seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt + c->rcv.wnd) < 0);
-	else
-		if(c->rcv.wnd == 0)
-			// We don't accept data when the receive window is zero.
-			acceptable = false;
-		else
-			// Both start and end of packet must be within the receive window
-			acceptable = (seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt + c->rcv.wnd) < 0)
-				|| (seqdiff(hdr.seq + len + 1, c->rcv.nxt) >= 0 && seqdiff(hdr.seq + len - 1, c->rcv.nxt + c->rcv.wnd) < 0);
-#else
-	if(c->state != SYN_SENT)
-		acceptable = hdr.seq == c->rcv.nxt;
-#endif
+			acceptable = rcv_offset - c->rcv.wnd < 0;
+	}
 
 	// Drop unacceptable packets
 	// seqno rolls back on retransmit, so possibly a previous ack got dropped
