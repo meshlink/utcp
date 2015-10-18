@@ -365,7 +365,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 	} *pkt;
 
 	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
-	if(!pkt->data)
+	if(!pkt)
 		return;
 
 	pkt->hdr.src = c->src;
