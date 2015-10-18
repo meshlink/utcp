@@ -25,6 +25,9 @@ long dropfrom;
 long dropto;
 double dropin;
 double dropout;
+long total_out;
+long total_in;
+
 
 void debug(const char *format, ...) {
 	struct timeval now;
@@ -62,6 +65,7 @@ ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 	if(outpktno < dropto && outpktno >= dropfrom && drand48() < dropout)
 		return len;
 
+	total_out += len;
 	ssize_t result = send(s, data, len, MSG_DONTWAIT);
 	if(result <= 0)
 		debug("Error sending UDP packet: %s\n", strerror(errno));
@@ -139,7 +143,7 @@ int main(int argc, char *argv[]) {
 
 		if(fds[0].revents) {
 			fds[0].revents = 0;
-			debug("stdin");
+			debug("stdin\n");
 			ssize_t len = read(0, buf, max);
 			if(len <= 0) {
 				fds[0].fd = -1;
@@ -172,8 +176,10 @@ int main(int argc, char *argv[]) {
 				if(!connect(s, (struct sockaddr *)&ss, sl))
 					connected = true;
 			inpktno++;
-			if(inpktno >= dropto || inpktno < dropfrom || drand48() >= dropin)
+			if(inpktno >= dropto || inpktno < dropfrom || drand48() >= dropin) {
+				total_in += len;
 				utcp_recv(u, buf, len);
+			}
 		}
 
 		timeout = utcp_timeout(u);
@@ -181,6 +187,8 @@ int main(int argc, char *argv[]) {
 
 	utcp_close(c);
 	utcp_exit(u);
+
+	debug("Total bytes in: %ld, out: %ld\n", total_in, total_out);
 
 	return 0;
 }
