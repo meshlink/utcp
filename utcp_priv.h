@@ -30,8 +30,11 @@
 #define FIN 4
 #define RST 8
 
+#define NSACKS 4
 #define DEFAULT_SNDBUFSIZE 4096
 #define DEFAULT_MAXSNDBUFSIZE 131072
+#define DEFAULT_RCVBUFSIZE 0
+#define DEFAULT_MAXRCVBUFSIZE 131072
 
 struct hdr {
 	uint16_t src; // Source port
@@ -78,6 +81,11 @@ struct buffer {
 	uint32_t maxsize;
 };
 
+struct sack {
+	uint32_t offset;
+	uint32_t len;
+};
+
 struct utcp_connection {
 	void *priv;
 	struct utcp *utcp;
@@ -118,9 +126,11 @@ struct utcp_connection {
 	struct timeval conn_timeout;
 	struct timeval rtrx_timeout;
 
-	// Send buffer
+	// Buffers
 
 	struct buffer sndbuf;
+	struct buffer rcvbuf;
+	struct sack sacks[NSACKS];
 
 	// Per-socket options
 
