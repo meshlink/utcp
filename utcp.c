@@ -1321,6 +1321,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 		if(!c)
 			continue;
 
+		// delete connections that have been utcp_close()d.
 		if(c->state == CLOSED) {
 			if(c->reapable) {
 				debug("Reaping %p\n", c);
@@ -1339,6 +1340,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 		}
 
 		if(timerisset(&c->rtrx_timeout) && timercmp(&c->rtrx_timeout, &now, <)) {
+			debug("retransmit()\n");
 			retransmit(c);
 		}
 
