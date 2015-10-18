@@ -131,15 +131,17 @@ int main(int argc, char *argv[]) {
 	struct timeval timeout = utcp_timeout(u);
 
 	while(!connected || utcp_is_active(u)) {
-		debug("\n");
 		size_t max = c ? utcp_get_sndbuf_free(c) : 0;
 		if(max > sizeof buf)
 			max = sizeof buf;
 
+		int timeout_ms = timeout.tv_sec * 1000 + timeout.tv_usec / 1000 + 1;
+
+		debug("polling, dir = %d, timeout = %d\n", dir, timeout_ms);
 		if((dir & DIR_READ) && max)
-			poll(fds, 2, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
+			poll(fds, 2, timeout_ms);
 		else
-			poll(fds + 1, 1, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
+			poll(fds + 1, 1, timeout_ms);
 
 		if(fds[0].revents) {
 			fds[0].revents = 0;
@@ -164,7 +166,7 @@ int main(int argc, char *argv[]) {
 
 		if(fds[1].revents) {
 			fds[1].revents = 0;
-			debug("netout\n");
+			debug("netin\n");
 			struct sockaddr_storage ss;
 			socklen_t sl = sizeof ss;
 			int len = recvfrom(s, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&ss, &sl);
