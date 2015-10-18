@@ -1164,7 +1164,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// - or we got an ack, so we should maybe send a bit more data
 	//   -> sendatleastone = false
 
-ack:
 	ack(c, prevrcvnxt != c->rcv.nxt);
 	return 0;
 
