@@ -58,11 +58,12 @@ INVARIANTS
 ----------
 
 - snd.una: the sequence number of the first byte we did not receive an ACK for
-- snd.nxt: the sequence number of the first byte after the last one we ever sent
+- snd.nxt: the sequence number of the first byte after the last packet we sent (due to retransmission, this may go backwards)
 - snd.wnd: the number of bytes we have left in our (UTCP/application?) input buffer
+- snd.last: the sequence number of the last byte that was enqueued in the TCP stream (increases only monotonically)
 
 - rcv.nxt: the sequence number of the first byte after the last one we passed up to the application
-- rcv.wnd: the number of bytes the receives has left in its input buffer (may be more/less than our send buffer size)
+- rcv.wnd: the number of bytes the receiver has left in its input buffer (may be more/less than our send buffer size)
 
 - The only packets that do not have ACK set must either have SYN or RST set
 - Only packets received with rcv.nxt <= hdr.seq <= rcv.nxt + rcv.wnd are valid, drop others.
