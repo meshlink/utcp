@@ -879,10 +879,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// ackno should not roll back, and it should also not be bigger than what we ever could have sent
 	// (= snd.una + c->sndbuf.used).
 
-	if(hdr.ctl & ACK &&
-			((seqdiff(hdr.ack, c->snd.una + c->sndbuf.used) > 0 &&
-			  seqdiff(hdr.ack, c->snd.nxt) > 0) // TODO: simplify this if
-			 || seqdiff(hdr.ack, c->snd.una) < 0)) {
+	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.last) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
 		debug("Packet ack seqno out of range, %u <= %u < %u\n", c->snd.una, hdr.ack, c->snd.una + c->sndbuf.used);
 		// Ignore unacceptable RST packets.
 		if(hdr.ctl & RST)
