@@ -333,6 +333,31 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	return c;
 }
 
+// Update RTT variables. See RFC 6298.
+static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
+	if(!rtt) {
+		debug("invalid rtt\n");
+		return;
+	}
+
+	struct utcp *utcp = c->utcp;
+
+	if(!utcp->srtt) {
+		utcp->srtt = rtt;
+		utcp->rttvar = rtt / 2;
+		utcp->rto = rtt + max(2 * rtt, CLOCK_GRANULARITY);
+	} else {
+		utcp->rttvar = (utcp->rttvar * 3 + abs(utcp->srtt - rtt)) / 4;
+		utcp->srtt = (utcp->srtt * 7 + rtt) / 8;
+		utcp->rto = utcp->srtt + max(utcp->rttvar, CLOCK_GRANULARITY);
+	}
+
+	if(utcp->rto > MAX_RTO)
+		utcp->rto = MAX_RTO;
+
+	debug("rtt %u srtt %u rttvar %u rto %u\n", rtt, utcp->srtt, utcp->rttvar, utcp->rto);
+}
+
 struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv) {
 	struct utcp_connection *c = allocate_connection(utcp, 0, dst);
 	if(!c)
@@ -418,6 +443,13 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 		if(seglen && fin_wanted(c, c->snd.nxt)) {
 			seglen--;
 			pkt->hdr.ctl |= FIN;
+		}
+
+		if(!c->rtt_start.tv_sec) {
+			// Start RTT measurement
+			gettimeofday(&c->rtt_start, NULL);
+			c->rtt_seq = pkt->hdr.seq + seglen;
+			debug("Starting RTT measurement, expecting ack %u\n", c->rtt_seq);
 		}
 
 		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
@@ -555,6 +587,10 @@ static void retransmit(struct utcp_connection *c) {
 			break;
 	}
 
+	utcp->rto *= 2;
+	if(utcp->rto > MAX_RTO)
+		utcp->rto = MAX_RTO;
+	c->rtt_start.tv_sec = 0; // invalidate RTT timer
 	free(pkt);
 }
 
@@ -893,6 +929,20 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	prevrcvnxt = c->rcv.nxt;
 
 	if(advanced) {
+		// RTT measurement
+		if(c->rtt_start.tv_sec) {
+			if(c->rtt_seq == hdr.ack) {
+				struct timeval now, diff;
+				gettimeofday(&now, NULL);
+				timersub(&now, &c->rtt_start, &diff);
+				update_rtt(c, diff.tv_sec * 1000000 + diff.tv_usec);
+				c->rtt_start.tv_sec = 0;
+			} else if(c->rtt_seq < hdr.ack) {
+				debug("Cancelling RTT measurement: %u < %u\n", c->rtt_seq, hdr.ack);
+				c->rtt_start.tv_sec = 0;
+			}
+		}
+
 		int32_t data_acked = advanced;
 
 		switch(c->state) {
@@ -1323,6 +1373,7 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 	utcp->priv = priv;
 	utcp->mtu = DEFAULT_MTU;
 	utcp->timeout = DEFAULT_USER_TIMEOUT; // s
+	utcp->rto = START_RTO; // us
 
 	return utcp;
 }
