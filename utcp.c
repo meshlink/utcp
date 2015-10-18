@@ -1309,14 +1309,14 @@ bool utcp_is_active(struct utcp *utcp) {
 }
 
 struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv) {
-	struct utcp *utcp = calloc(1, sizeof *utcp);
-	if(!utcp)
-		return NULL;
-
 	if(!send) {
 		errno = EFAULT;
 		return NULL;
 	}
+
+	struct utcp *utcp = calloc(1, sizeof *utcp);
+	if(!utcp)
+		return NULL;
 
 	utcp->accept = accept;
 	utcp->pre_accept = pre_accept;
