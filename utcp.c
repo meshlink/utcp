@@ -1014,6 +1014,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				//Reset the congestion window so we wait for ACKs.
 				c->snd.nxt = c->snd.una;
 				c->snd.cwnd = utcp->mtu;
+				start_retransmit_timer(c);
 			}
 		}
 	}
@@ -1161,7 +1162,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// - or we got an ack, so we should maybe send a bit more data
 	//   -> sendatleastone = false
 
-	ack(c, prevrcvnxt != c->rcv.nxt);
+	ack(c, len || prevrcvnxt != c->rcv.nxt);
 	return 0;
 
 reset:
