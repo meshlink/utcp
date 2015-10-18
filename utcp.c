@@ -279,7 +279,12 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 
 	c->src = src;
 	c->dst = dst;
+#ifdef UTCP_DEBUG
+#warning debugging
+	c->snd.iss = 0;
+#else
 	c->snd.iss = rand();
+#endif
 	c->snd.una = c->snd.iss;
 	c->snd.nxt = c->snd.iss + 1;
 	c->rcv.wnd = utcp->mtu;
