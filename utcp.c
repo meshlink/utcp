@@ -197,9 +197,11 @@ static ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t
 
 static bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen) {
 	memset(buf, 0, sizeof *buf);
-	buf->data = malloc(len);
-	if(!len)
-		return false;
+	if(len) {
+		buf->data = malloc(len);
+		if(!buf->data)
+			return false;
+	}
 	buf->size = len;
 	buf->maxsize = maxlen;
 	return true;
