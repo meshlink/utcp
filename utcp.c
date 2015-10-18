@@ -1318,8 +1318,8 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 	utcp->pre_accept = pre_accept;
 	utcp->send = send;
 	utcp->priv = priv;
-	utcp->mtu = 1000;
-	utcp->timeout = 60;
+	utcp->mtu = DEFAULT_MTU;
+	utcp->timeout = DEFAULT_USER_TIMEOUT; // s
 
 	return utcp;
 }

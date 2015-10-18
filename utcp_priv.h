@@ -36,6 +36,10 @@
 #define DEFAULT_RCVBUFSIZE 0
 #define DEFAULT_MAXRCVBUFSIZE 131072
 
+#define DEFAULT_MTU 1000
+
+#define DEFAULT_USER_TIMEOUT 60 // s
+
 struct hdr {
 	uint16_t src; // Source port
 	uint16_t dst; // Destination port
