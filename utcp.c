@@ -127,16 +127,30 @@ static int32_t seqdiff(uint32_t a, uint32_t b) {
 // TODO: convert to ringbuffers to avoid memmove() operations.
 
 // Store data into the buffer
-static ssize_t buffer_put(struct buffer *buf, const void *data, size_t len) {
+static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data, size_t len) {
 	if(buf->maxsize <= buf->used)
 		return 0;
-	if(len > buf->maxsize - buf->used)
-		len = buf->maxsize - buf->used;
-	if(len > buf->size - buf->used) {
+
+	debug("buffer_put_at %zu %zu %zu\n", buf->used, offset, len);
+
+	size_t required = offset + len;
+	if(required > buf->maxsize) {
+		if(offset >= buf->maxsize)
+			return 0;
+		abort();
+		len = buf->maxsize - offset;
+		required = buf->maxsize;
+	}
+
+	if(required > buf->size) {
 		size_t newsize = buf->size;
-		do {
-			newsize *= 2;
-		} while(newsize < buf->used + len);
+		if(!newsize) {
+			newsize = required;
+		} else {
+			do {
+				newsize *= 2;
+			} while(newsize < buf->used + len);
+		}
 		if(newsize > buf->maxsize)
 			newsize = buf->maxsize;
 		char *newdata = realloc(buf->data, newsize);
@@ -145,9 +159,15 @@ static ssize_t buffer_put(struct buffer *buf, const void *data, size_t len) {
 		buf->data = newdata;
 		buf->size = newsize;
 	}
-	memcpy(buf->data + buf->used, data, len);
-	buf->used += len;
+
+	memcpy(buf->data + offset, data, len);
+	if(required > buf->used)
+		buf->used = required;
 	return len;
+}
+
+static ssize_t buffer_put(struct buffer *buf, const void *data, size_t len) {
+	return buffer_put_at(buf, buf->used, data, len);
 }
 
 // Get data from the buffer. data can be NULL.
