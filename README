@@ -85,14 +85,24 @@ The timeout is in the order of minutes.
 RETRANSMIT TIMEOUT
 ------------------
 
-(See RFC 2988, 3366)
+(See RFC 6298.)
 
 This timer is intended to catch the case where we didn't get an ACK from the peer.
 In principle, the timeout should be slightly longer than the maximum latency along the path.
 
+- The rtrx timer is set whenever we send a packet that must be ACKed by the peer:
+  - when it contains data
+  - when SYN or FIN is set
+- The rtrx timer is reset when we receive a packet that advances snd.una.
+  - it is cleared when snd.una == snd.last
+  - otherwise the timeout is set to the value of utcp->rto
+- If the rtrx timer expires, retransmit at least one packet, multiply the timeout by two, and rearm the timeout.
 
-- The rtrx timeout is set whenever snd.nxt is advanced.
-- If the rtrx timeout expires, retransmit at least one packet, and re-set the timeout.
+The value of RTO is calculated according to the RFC. At the moment, no
+timestamps are added to packets. When the RTT timer is not set, start it when
+sending a packet. When the ACK arrives, stop the timer and use the time
+difference as a measured RTT value.  Use the algorithm from RFC 6298 to update
+RTO.
 
 STATES
 ------
