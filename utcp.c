@@ -355,6 +355,21 @@ static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
 	debug("rtt %u srtt %u rttvar %u rto %u\n", rtt, utcp->srtt, utcp->rttvar, utcp->rto);
 }
 
+static void start_retransmit_timer(struct utcp_connection *c) {
+	gettimeofday(&c->rtrx_timeout, NULL);
+	c->rtrx_timeout.tv_usec += c->utcp->rto;
+	while(c->rtrx_timeout.tv_usec >= 1000000) {
+		c->rtrx_timeout.tv_usec -= 1000000;
+		c->rtrx_timeout.tv_sec++;
+	}
+	debug("timeout set to %lu.%06lu (%u)\n", c->rtrx_timeout.tv_sec, c->rtrx_timeout.tv_usec, c->utcp->rto);
+}
+
+static void stop_retransmit_timer(struct utcp_connection *c) {
+	timerclear(&c->rtrx_timeout);
+	debug("timeout cleared\n");
+}
+
 struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv) {
 	struct utcp_connection *c = allocate_connection(utcp, 0, dst);
 	if(!c)
@@ -502,6 +517,8 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
 	c->snd.last += len;
 	ack(c, false);
+	if(!timerisset(&c->rtrx_timeout))
+		start_retransmit_timer(c);
 	return len;
 }
 
@@ -580,14 +597,17 @@ static void retransmit(struct utcp_connection *c) {
 #ifdef UTCP_DEBUG
 			abort();
 #endif
-			timerclear(&c->rtrx_timeout);
-			break;
+			stop_retransmit_timer(c);
+			goto cleanup;
 	}
 
+	start_retransmit_timer(c);
 	utcp->rto *= 2;
 	if(utcp->rto > MAX_RTO)
 		utcp->rto = MAX_RTO;
 	c->rtt_start.tv_sec = 0; // invalidate RTT timer
+
+cleanup:
 	free(pkt);
 }
 
@@ -1005,8 +1025,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(advanced) {
 		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
-		if(c->snd.una == c->snd.nxt)
-			timerclear(&c->rtrx_timeout);
+		if(c->snd.una == c->snd.last)
+			stop_retransmit_timer(c);
+		else
+			start_retransmit_timer(c);
 	}
 
 	// 5. Process SYN stuff
@@ -1326,13 +1348,6 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 
 		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <))
 			next = c->conn_timeout;
-
-		if(c->snd.nxt != c->snd.una) {
-			c->rtrx_timeout = now;
-			c->rtrx_timeout.tv_sec++;
-		} else {
-			timerclear(&c->rtrx_timeout);
-		}
 
 		if(timerisset(&c->rtrx_timeout) && timercmp(&c->rtrx_timeout, &next, <))
 			next = c->rtrx_timeout;
