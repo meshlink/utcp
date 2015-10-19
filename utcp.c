@@ -547,8 +547,11 @@ static void swap_ports(struct hdr *hdr) {
 }
 
 static void retransmit(struct utcp_connection *c) {
-	if(c->state == CLOSED || c->snd.nxt == c->snd.una)
+	if(c->state == CLOSED || c->snd.last == c->snd.una) {
+		debug("Retransmit() called but nothing to retransmit!\n");
+		stop_retransmit_timer(c);
 		return;
+	}
 
 	struct utcp *utcp = c->utcp;
 
