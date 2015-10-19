@@ -1262,6 +1262,8 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	c->snd.last++;
 
 	ack(c, false);
+	if(!timerisset(&c->rtrx_timeout))
+		start_retransmit_timer(c);
 	return 0;
 }
 
