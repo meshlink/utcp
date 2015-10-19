@@ -24,11 +24,16 @@ long inpktno;
 long outpktno;
 long dropfrom;
 long dropto;
+double reorder;
+long reorder_dist;
 double dropin;
 double dropout;
 long total_out;
 long total_in;
 
+char *reorder_data;
+size_t reorder_len;
+int reorder_countdown;
 
 void debug(const char *format, ...) {
 	struct timeval now;
@@ -63,8 +68,26 @@ void do_accept(struct utcp_connection *nc, uint16_t port) {
 ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
 	outpktno++;
-	if(outpktno < dropto && outpktno >= dropfrom && drand48() < dropout)
-		return len;
+	if(outpktno >= dropfrom && outpktno < dropto) {
+		if(drand48() < dropout)
+			return len;
+		if(!reorder_data && drand48() < reorder) {
+			reorder_data = malloc(len);
+			reorder_len = len;
+			memcpy(reorder_data, data, len);
+			reorder_countdown = 1 + drand48() * reorder_dist;
+			return len;
+		}
+	}
+
+	if(reorder_data) {
+		if(--reorder_countdown < 0) {
+			total_out += reorder_len;
+			send(s, reorder_data, reorder_len, MSG_DONTWAIT);
+			free(reorder_data);
+			reorder_data = NULL;
+		}
+	}
 
 	total_out += len;
 	ssize_t result = send(s, data, len, MSG_DONTWAIT);
@@ -87,6 +110,8 @@ int main(int argc, char *argv[]) {
 	dropout = atof(getenv("DROPOUT") ?: "0");
 	dropfrom = atoi(getenv("DROPFROM") ?: "0");
 	dropto = atoi(getenv("DROPTO") ?: "0");
+	reorder = atof(getenv("REORDER") ?: "0");
+	reorder_dist = atoi(getenv("REORDER_DIST") ?: "10");
 
 	struct addrinfo *ai;
 	struct addrinfo hint = {
@@ -190,6 +215,7 @@ int main(int argc, char *argv[]) {
 
 	utcp_close(c);
 	utcp_exit(u);
+	free(reorder_data);
 
 	debug("Total bytes in: %ld, out: %ld\n", total_in, total_out);
 
