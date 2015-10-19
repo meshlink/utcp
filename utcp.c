@@ -561,13 +561,14 @@ static void retransmit(struct utcp_connection *c) {
 
 	pkt->hdr.src = c->src;
 	pkt->hdr.dst = c->dst;
+	pkt->hdr.wnd = c->rcv.wnd;
+	pkt->hdr.aux = 0;
 
 	switch(c->state) {
 		case SYN_SENT:
 			// Send our SYN again
 			pkt->hdr.seq = c->snd.iss;
 			pkt->hdr.ack = 0;
-			pkt->hdr.wnd = c->rcv.wnd;
 			pkt->hdr.ctl = SYN;
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
 			utcp->send(utcp, pkt, sizeof pkt->hdr);
