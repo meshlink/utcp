@@ -112,6 +112,9 @@ int main(int argc, char *argv[]) {
 	reorder = atof(getenv("REORDER") ?: "0");
 	reorder_dist = atoi(getenv("REORDER_DIST") ?: "10");
 
+	if(dropto < dropfrom)
+		dropto = 1 << 30;
+
 	struct addrinfo *ai;
 	struct addrinfo hint = {
 		.ai_flags = server ? AI_PASSIVE : 0,
