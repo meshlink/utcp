@@ -270,6 +270,7 @@ static void free_connection(struct utcp_connection *c) {
 	memmove(cp, cp + 1, (utcp->nconnections - i - 1) * sizeof *cp);
 	utcp->nconnections--;
 
+	buffer_exit(&c->rcvbuf);
 	buffer_exit(&c->sndbuf);
 	free(c);
 }
@@ -315,6 +316,7 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	}
 
 	if(!buffer_init(&c->rcvbuf, DEFAULT_RCVBUFSIZE, DEFAULT_MAXRCVBUFSIZE)) {
+		buffer_exit(&c->sndbuf);
 		free(c);
 		return NULL;
 	}
@@ -1413,6 +1415,7 @@ void utcp_exit(struct utcp *utcp) {
 	for(int i = 0; i < utcp->nconnections; i++) {
 		if(!utcp->connections[i]->reapable)
 			debug("Warning, freeing unclosed connection %p\n", utcp->connections[i]);
+		buffer_exit(&utcp->connections[i]->rcvbuf);
 		buffer_exit(&utcp->connections[i]->sndbuf);
 		free(utcp->connections[i]);
 	}
