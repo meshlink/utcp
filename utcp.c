@@ -630,7 +630,24 @@ cleanup:
 	free(pkt);
 }
 
-// Update receive buffer and SACK entries after consuming data.
+/* Update receive buffer and SACK entries after consuming data.
+ *
+ * Situation:
+ *
+ * |.....0000..1111111111.....22222......3333|
+ * |---------------^
+ *
+ * 0..3 represent the SACK entries. The ^ indicates up to which point we want
+ * to remove data from the receive buffer. The idea is to substract "len"
+ * from the offset of all the SACK entries, and then remove/cut down entries
+ * that are shifted to before the start of the receive buffer.
+ *
+ * There are three cases:
+ * - the SACK entry is ahead of ^, in that case just change the offset.
+ * - the SACK entry starts before and ends after ^, so we have to
+ *   change both its offset and size.
+ * - the SACK entry is completely before ^, in that case delete it.
+ */
 static void sack_consume(struct utcp_connection *c, size_t len) {
 	debug("sack_consume %zu\n", len);
 	if(len > c->rcvbuf.used)
@@ -643,13 +660,13 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
 			c->sacks[i].offset -= len;
 			i++;
 		} else if(len < c->sacks[i].offset + c->sacks[i].len) {
-			c->sacks[i].offset = 0;
 			c->sacks[i].len -= len - c->sacks[i].offset;
+			c->sacks[i].offset = 0;
 			i++;
 		} else {
 			if(i < NSACKS - 1) {
 				memmove(&c->sacks[i], &c->sacks[i + 1], (NSACKS - 1 - i) * sizeof c->sacks[i]);
-				c->sacks[i + 1].len = 0;
+				c->sacks[NSACKS - 1].len = 0;
 			} else {
 				c->sacks[i].len = 0;
 				break;
