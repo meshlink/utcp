@@ -575,8 +575,6 @@ static void retransmit(struct utcp_connection *c) {
 // Update receive buffer and SACK entries after consuming data.
 static void sack_consume(struct utcp_connection *c, size_t len) {
 	debug("sack_consume %zu\n", len);
-	if(len > c->rcvbuf.used)
-		abort();
 
 	buffer_get(&c->rcvbuf, NULL, len);
 
@@ -590,8 +588,10 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
 			i++;
 		} else {
 			if(i < NSACKS - 1) {
-				memmove(&c->sacks[i], &c->sacks[i + 1], (NSACKS - 1 - i) * sizeof c->sacks[i]);
-				c->sacks[i + 1].len = 0;
+				// move remaining sacks one ahead
+				memmove(&c->sacks[i], &c->sacks[i + 1], ((NSACKS - 1) - i) * sizeof c->sacks[i]);
+				// clean obsolete sack len
+				c->sacks[(NSACKS - 1) - i].len = 0;
 			} else {
 				c->sacks[i].len = 0;
 				break;
@@ -605,10 +605,15 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
 
 static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, const void *data, size_t len) {
 	debug("out of order packet, offset %u\n", offset);
+
+	// drop packets that are ahead of max buffer size
+	if(offset >= c->rcvbuf.maxsize) {
+		debug("warning: packet offset %u ahead of max buffer size %u\n", offset, c->rcvbuf.maxsize);
+		return;
+	}
+
 	// Packet loss or reordering occured. Store the data in the buffer.
 	ssize_t rxd = buffer_put_at(&c->rcvbuf, offset, data, len);
-	if(rxd < len)
-		abort();
 
 	// Make note of where we put it.
 	for(int i = 0; i < NSACKS; i++) {
@@ -647,11 +652,16 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 
 static void handle_in_order(struct utcp_connection *c, const void *data, size_t len) {
 	// Check if we can process out-of-order data now.
-	if(c->sacks[0].len && len >= c->sacks[0].offset) { // TODO: handle overlap with second SACK
+	if(len < c->rcvbuf.maxsize && c->sacks[0].len && len >= c->sacks[0].offset) {
 		debug("incoming packet len %zu connected with SACK at %u\n", len, c->sacks[0].offset);
-		buffer_put_at(&c->rcvbuf, 0, data, len); // TODO: handle return value
-		len = max(len, c->sacks[0].offset + c->sacks[0].len);
-		data = c->rcvbuf.data;
+		if(buffer_put_at(&c->rcvbuf, 0, data, len) != len)
+			// log error but proceed with retrieved data
+			debug("failed to buffer packet data\n");
+		else {
+			for(int i = 0; i < NSACKS && c->sacks[i].len && c->sacks[i].offset <= len; i++)
+				len = max(len, c->sacks[i].offset + c->sacks[i].len);
+			data = c->rcvbuf.data;
+		}
 	}
 
 	if(c->recv) {
@@ -671,8 +681,6 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 
 static void handle_incoming_data(struct utcp_connection *c, uint32_t seq, const void *data, size_t len) {
 	uint32_t offset = seqdiff(seq, c->rcv.nxt);
-	if(offset + len > c->rcvbuf.maxsize)
-		abort();
 
 	if(offset)
 		handle_out_of_order(c, offset, data, len);
