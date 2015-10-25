@@ -384,8 +384,7 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 #endif
 	c->snd.una = c->snd.iss;
 	c->snd.nxt = c->snd.iss + 1;
-	// TODO: c->rcv.wnd = utcp->mtu;
-	c->rcv.wnd = 0;
+	c->rcv.wnd = utcp->mtu;
 	c->snd.last = c->snd.nxt;
 	c->snd.cwnd = utcp->mtu;
 	c->utcp = utcp;
@@ -1018,10 +1017,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(c->state == SYN_SENT)
 		acceptable = true;
-
-#if 1
-	// Only use this when accepting out-of-order or overlapping packets.
-	// to only accept overlapping packets, make sure c->rcv.wnd is set to 0
 	else {
 		int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
 
@@ -1029,30 +1024,23 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		if(len == 0)
 			acceptable = rcv_offset >= 0;
 		else {
-			// cut already accepted front overlapping
-			if(rcv_offset < 0) {
+			// accept all packets in sequence
+			if(rcv_offset == 0)
+				acceptable = true;
+			// accept overlapping packets
+			else if(rcv_offset < 0) {
+				// cut already accepted front overlapping
 				if(len >= -rcv_offset) {
 					data -= rcv_offset;
 					len += rcv_offset;
-					rcv_offset = 0;
+					acceptable = true;
 				}
 			}
-
-			// check data left after cut
-			if(rcv_offset >= 0) {
-				if(c->rcv.wnd == 0)
-					// with no c->rcv.wnd only accept matching packets.
-					acceptable = rcv_offset == 0;
-				else
-					// packets must be within the receive window, accept overlapping packets
-					acceptable = rcv_offset + len <= c->rcvbuf.maxsize;
-			}
+			// accept packets that can partially be stored to the buffer
+			else
+				acceptable = rcv_offset < c->rcvbuf.maxsize;
 		}
 	}
-#else
-	if(c->state != SYN_SENT)
-		acceptable = hdr.seq == c->rcv.nxt;
-#endif
 
 	// Update connection timer
 	// whenever we advance or get an acceptable packet, deem the connection active
