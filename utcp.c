@@ -111,10 +111,61 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 #define print_packet(...)
 #endif
 
+static void start_connection_timer(struct utcp_connection *c) {
+	gettimeofday(&c->conn_timeout, NULL);
+	c->conn_timeout.tv_sec += c->utcp->timeout;
+	debug("connection timeout set to %lu.%06lu\n", c->conn_timeout.tv_sec, c->conn_timeout.tv_usec);
+}
+
+static void stop_connection_timer(struct utcp_connection *c) {
+	timerclear(&c->conn_timeout);
+	debug("connection timeout cleared\n");
+}
+
+static void start_retransmit_timer(struct utcp_connection *c) {
+	gettimeofday(&c->rtrx_timeout, NULL);
+	c->rtrx_timeout.tv_usec += c->utcp->rto;
+	while(c->rtrx_timeout.tv_usec >= 1000000) {
+		c->rtrx_timeout.tv_usec -= 1000000;
+		c->rtrx_timeout.tv_sec++;
+	}
+	debug("retransmit timeout set to %lu.%06lu (%u)\n", c->rtrx_timeout.tv_sec, c->rtrx_timeout.tv_usec, c->utcp->rto);
+}
+
+static void stop_retransmit_timer(struct utcp_connection *c) {
+	timerclear(&c->rtrx_timeout);
+	debug("retransmit timeout cleared\n");
+}
+
+// Update RTT variables. See RFC 6298.
+static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
+	if(!rtt) {
+		debug("invalid rtt\n");
+		return;
+	}
+
+	struct utcp *utcp = c->utcp;
+
+	if(!utcp->srtt) {
+		utcp->srtt = rtt;
+		utcp->rttvar = rtt / 2;
+		utcp->rto = rtt + max(2 * rtt, CLOCK_GRANULARITY);
+	} else {
+		utcp->rttvar = (utcp->rttvar * 3 + abs(utcp->srtt - rtt)) / 4;
+		utcp->srtt = (utcp->srtt * 7 + rtt) / 8;
+		utcp->rto = utcp->srtt + max(utcp->rttvar, CLOCK_GRANULARITY);
+	}
+
+	if(utcp->rto > MAX_RTO)
+		utcp->rto = MAX_RTO;
+
+	debug("rtt %u srtt %u rttvar %u rto %u\n", rtt, utcp->srtt, utcp->rttvar, utcp->rto);
+}
+
 static void set_state(struct utcp_connection *c, enum state state) {
 	c->state = state;
 	if(state == ESTABLISHED)
-		timerclear(&c->conn_timeout);
+		stop_connection_timer(&c);
 	debug("%p new state: %s\n", c->utcp, strstate[state]);
 }
 
@@ -347,46 +398,6 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	return c;
 }
 
-// Update RTT variables. See RFC 6298.
-static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
-	if(!rtt) {
-		debug("invalid rtt\n");
-		return;
-	}
-
-	struct utcp *utcp = c->utcp;
-
-	if(!utcp->srtt) {
-		utcp->srtt = rtt;
-		utcp->rttvar = rtt / 2;
-		utcp->rto = rtt + max(2 * rtt, CLOCK_GRANULARITY);
-	} else {
-		utcp->rttvar = (utcp->rttvar * 3 + abs(utcp->srtt - rtt)) / 4;
-		utcp->srtt = (utcp->srtt * 7 + rtt) / 8;
-		utcp->rto = utcp->srtt + max(utcp->rttvar, CLOCK_GRANULARITY);
-	}
-
-	if(utcp->rto > MAX_RTO)
-		utcp->rto = MAX_RTO;
-
-	debug("rtt %u srtt %u rttvar %u rto %u\n", rtt, utcp->srtt, utcp->rttvar, utcp->rto);
-}
-
-static void start_retransmit_timer(struct utcp_connection *c) {
-	gettimeofday(&c->rtrx_timeout, NULL);
-	c->rtrx_timeout.tv_usec += c->utcp->rto;
-	while(c->rtrx_timeout.tv_usec >= 1000000) {
-		c->rtrx_timeout.tv_usec -= 1000000;
-		c->rtrx_timeout.tv_sec++;
-	}
-	debug("timeout set to %lu.%06lu (%u)\n", c->rtrx_timeout.tv_sec, c->rtrx_timeout.tv_usec, c->utcp->rto);
-}
-
-static void stop_retransmit_timer(struct utcp_connection *c) {
-	timerclear(&c->rtrx_timeout);
-	debug("timeout cleared\n");
-}
-
 struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv) {
 	struct utcp_connection *c = allocate_connection(utcp, 0, dst);
 	if(!c)
@@ -410,8 +421,7 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
 	print_packet(utcp, "send", &hdr, sizeof hdr);
 	utcp->send(utcp, &hdr, sizeof hdr);
 
-	gettimeofday(&c->conn_timeout, NULL);
-	c->conn_timeout.tv_sec += utcp->timeout;
+	start_connection_timer(c);
 
 	return c;
 }
@@ -537,6 +547,8 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	ack(c, false);
 	if(!timerisset(&c->rtrx_timeout))
 		start_retransmit_timer(c);
+	if(!timerisset(&c->conn_timeout))
+		start_connection_timer(c);
 	return len;
 }
 
@@ -968,11 +980,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 					set_state(c, FIN_WAIT_2);
 				break;
 			case CLOSING:
-				if(c->snd.una == c->snd.last) {
-					gettimeofday(&c->conn_timeout, NULL);
-					c->conn_timeout.tv_sec += 60;
+				if(c->snd.una == c->snd.last)
 					set_state(c, TIME_WAIT);
-				}
 				break;
 			default:
 				break;
@@ -987,7 +996,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 					c->snd.nxt = c->snd.una;
 					//Reset the congestion window so we wait for ACKs.
 					c->snd.cwnd = utcp->mtu;
-					start_retransmit_timer(c);
 				}
 			}
 		}
@@ -1046,6 +1054,29 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		acceptable = hdr.seq == c->rcv.nxt;
 #endif
 
+	// Update connection timer
+	// whenever we advance or get an acceptable packet, deem the connection active
+
+	if(advanced || acceptable) {
+		if(c->snd.una != c->snd.last)
+			start_connection_timer(c);
+		else {
+			switch(c->state) {
+			case FIN_WAIT_1:
+			case FIN_WAIT_2:
+			case CLOSING:
+			case LAST_ACK:
+			case TIME_WAIT:
+				start_connection_timer(c);
+				break;
+			default:
+				// disable connection timer till next packet is sent
+				stop_connection_timer(c);
+				break;
+			}
+		}
+	}
+
 	// Drop unacceptable packets
 	// seqno rolls back on retransmit, so possibly a previous ack got dropped
 
@@ -1059,10 +1090,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		ack(c, true);
 		return 0;
 	}
-
-	// Update connection timer
-
-	timerclear(&c->conn_timeout); // Set in utcp_timeout()
 
 	// 4. Handle RST packets
 
@@ -1216,8 +1243,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			set_state(c, CLOSING);
 			break;
 		case FIN_WAIT_2:
-			gettimeofday(&c->conn_timeout, NULL);
-			c->conn_timeout.tv_sec += 60;
 			set_state(c, TIME_WAIT);
 			break;
 		case CLOSE_WAIT:
@@ -1329,6 +1354,8 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	ack(c, false);
 	if(!timerisset(&c->rtrx_timeout))
 		start_retransmit_timer(c);
+	if(!timerisset(&c->conn_timeout))
+		start_connection_timer(c);
 	return 0;
 }
 
@@ -1428,12 +1455,9 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 					c->recv(c, NULL, 0);
 				continue;
 			}
-		} else {
-			c->conn_timeout = now;
-			c->conn_timeout.tv_sec += utcp->timeout;
+			if(timercmp(&c->conn_timeout, &next, <))
+				next = c->conn_timeout;
 		}
-		if(timercmp(&c->conn_timeout, &next, <))
-			next = c->conn_timeout;
 
 		// check retransmit timeout
 		if(timerisset(&c->rtrx_timeout)) {
