@@ -165,7 +165,7 @@ static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
 static void set_state(struct utcp_connection *c, enum state state) {
 	c->state = state;
 	if(state == ESTABLISHED)
-		stop_connection_timer(&c);
+		stop_connection_timer(c);
 	debug("%p new state: %s\n", c->utcp, strstate[state]);
 }
 
