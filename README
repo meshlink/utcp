@@ -58,11 +58,12 @@ INVARIANTS
 ----------
 
 - snd.una: the sequence number of the first byte we did not receive an ACK for
-- snd.nxt: the sequence number of the first byte after the last one we ever sent
+- snd.nxt: the sequence number of the first byte after the last packet we sent (due to retransmission, this may go backwards)
 - snd.wnd: the number of bytes we have left in our (UTCP/application?) input buffer
+- snd.last: the sequence number of the last byte that was enqueued in the TCP stream (increases only monotonically)
 
 - rcv.nxt: the sequence number of the first byte after the last one we passed up to the application
-- rcv.wnd: the number of bytes the receives has left in its input buffer (may be more/less than our send buffer size)
+- rcv.wnd: the number of bytes the receiver has left in its input buffer (may be more/less than our send buffer size)
 
 - The only packets that do not have ACK set must either have SYN or RST set
 - Only packets received with rcv.nxt <= hdr.seq <= rcv.nxt + rcv.wnd are valid, drop others.
@@ -84,14 +85,24 @@ The timeout is in the order of minutes.
 RETRANSMIT TIMEOUT
 ------------------
 
-(See RFC 2988, 3366)
+(See RFC 6298.)
 
 This timer is intended to catch the case where we didn't get an ACK from the peer.
 In principle, the timeout should be slightly longer than the maximum latency along the path.
 
+- The rtrx timer is set whenever we send a packet that must be ACKed by the peer:
+  - when it contains data
+  - when SYN or FIN is set
+- The rtrx timer is reset when we receive a packet that advances snd.una.
+  - it is cleared when snd.una == snd.last
+  - otherwise the timeout is set to the value of utcp->rto
+- If the rtrx timer expires, retransmit at least one packet, multiply the timeout by two, and rearm the timeout.
 
-- The rtrx timeout is set whenever snd.nxt is advanced.
-- If the rtrx timeout expires, retransmit at least one packet, and re-set the timeout.
+The value of RTO is calculated according to the RFC. At the moment, no
+timestamps are added to packets. When the RTT timer is not set, start it when
+sending a packet. When the ACK arrives, stop the timer and use the time
+difference as a measured RTT value.  Use the algorithm from RFC 6298 to update
+RTO.
 
 STATES
 ------

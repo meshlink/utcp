@@ -271,6 +271,7 @@ static void free_connection(struct utcp_connection *c) {
 	memmove(cp, cp + 1, (utcp->nconnections - i - 1) * sizeof *cp);
 	utcp->nconnections--;
 
+	buffer_exit(&c->rcvbuf);
 	buffer_exit(&c->sndbuf);
 	free(c);
 }
@@ -316,6 +317,7 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	}
 
 	if(!buffer_init(&c->rcvbuf, DEFAULT_RCVBUFSIZE, DEFAULT_MAXRCVBUFSIZE)) {
+		buffer_exit(&c->sndbuf);
 		free(c);
 		return NULL;
 	}
@@ -325,7 +327,6 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	c->src = src;
 	c->dst = dst;
 #ifdef UTCP_DEBUG
-#warning debugging
 	c->snd.iss = 0;
 #else
 	c->snd.iss = rand();
@@ -344,6 +345,46 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	qsort(utcp->connections, utcp->nconnections, sizeof *utcp->connections, compare);
 
 	return c;
+}
+
+// Update RTT variables. See RFC 6298.
+static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
+	if(!rtt) {
+		debug("invalid rtt\n");
+		return;
+	}
+
+	struct utcp *utcp = c->utcp;
+
+	if(!utcp->srtt) {
+		utcp->srtt = rtt;
+		utcp->rttvar = rtt / 2;
+		utcp->rto = rtt + max(2 * rtt, CLOCK_GRANULARITY);
+	} else {
+		utcp->rttvar = (utcp->rttvar * 3 + abs(utcp->srtt - rtt)) / 4;
+		utcp->srtt = (utcp->srtt * 7 + rtt) / 8;
+		utcp->rto = utcp->srtt + max(utcp->rttvar, CLOCK_GRANULARITY);
+	}
+
+	if(utcp->rto > MAX_RTO)
+		utcp->rto = MAX_RTO;
+
+	debug("rtt %u srtt %u rttvar %u rto %u\n", rtt, utcp->srtt, utcp->rttvar, utcp->rto);
+}
+
+static void start_retransmit_timer(struct utcp_connection *c) {
+	gettimeofday(&c->rtrx_timeout, NULL);
+	c->rtrx_timeout.tv_usec += c->utcp->rto;
+	while(c->rtrx_timeout.tv_usec >= 1000000) {
+		c->rtrx_timeout.tv_usec -= 1000000;
+		c->rtrx_timeout.tv_sec++;
+	}
+	debug("timeout set to %lu.%06lu (%u)\n", c->rtrx_timeout.tv_sec, c->rtrx_timeout.tv_usec, c->utcp->rto);
+}
+
+static void stop_retransmit_timer(struct utcp_connection *c) {
+	timerclear(&c->rtrx_timeout);
+	debug("timeout cleared\n");
 }
 
 struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv) {
@@ -434,6 +475,13 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
 		buffer_copy(&c->sndbuf, pkt->data, bufpos, seglen);
 
+		if(!c->rtt_start.tv_sec) {
+			// Start RTT measurement
+			gettimeofday(&c->rtt_start, NULL);
+			c->rtt_seq = pkt->hdr.seq + seglen;
+			debug("Starting RTT measurement, expecting ack %u\n", c->rtt_seq);
+		}
+
 		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
 		c->utcp->send(c->utcp, pkt, sizeof pkt->hdr + seglen);
 	} while(left);
@@ -487,6 +535,8 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
 	c->snd.last += len;
 	ack(c, false);
+	if(!timerisset(&c->rtrx_timeout))
+		start_retransmit_timer(c);
 	return len;
 }
 
@@ -497,8 +547,11 @@ static void swap_ports(struct hdr *hdr) {
 }
 
 static void retransmit(struct utcp_connection *c) {
-	if(c->state == CLOSED || c->snd.nxt == c->snd.una)
+	if(c->state == CLOSED || c->snd.last == c->snd.una) {
+		debug("Retransmit() called but nothing to retransmit!\n");
+		stop_retransmit_timer(c);
 		return;
+	}
 
 	struct utcp *utcp = c->utcp;
 
@@ -513,13 +566,14 @@ static void retransmit(struct utcp_connection *c) {
 
 	pkt->hdr.src = c->src;
 	pkt->hdr.dst = c->dst;
+	pkt->hdr.wnd = c->rcv.wnd;
+	pkt->hdr.aux = 0;
 
 	switch(c->state) {
 		case SYN_SENT:
 			// Send our SYN again
 			pkt->hdr.seq = c->snd.iss;
 			pkt->hdr.ack = 0;
-			pkt->hdr.wnd = c->rcv.wnd;
 			pkt->hdr.ctl = SYN;
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
 			utcp->send(utcp, pkt, sizeof pkt->hdr);
@@ -565,14 +619,38 @@ static void retransmit(struct utcp_connection *c) {
 #ifdef UTCP_DEBUG
 			abort();
 #endif
-			timerclear(&c->rtrx_timeout);
-			break;
+			stop_retransmit_timer(c);
+			goto cleanup;
 	}
 
+	start_retransmit_timer(c);
+	utcp->rto *= 2;
+	if(utcp->rto > MAX_RTO)
+		utcp->rto = MAX_RTO;
+	c->rtt_start.tv_sec = 0; // invalidate RTT timer
+
+cleanup:
 	free(pkt);
 }
 
-// Update receive buffer and SACK entries after consuming data.
+/* Update receive buffer and SACK entries after consuming data.
+ *
+ * Situation:
+ *
+ * |.....0000..1111111111.....22222......3333|
+ * |---------------^
+ *
+ * 0..3 represent the SACK entries. The ^ indicates up to which point we want
+ * to remove data from the receive buffer. The idea is to substract "len"
+ * from the offset of all the SACK entries, and then remove/cut down entries
+ * that are shifted to before the start of the receive buffer.
+ *
+ * There are three cases:
+ * - the SACK entry is ahead of ^, in that case just change the offset.
+ * - the SACK entry starts before and ends after ^, so we have to
+ *   change both its offset and size.
+ * - the SACK entry is completely before ^, in that case delete it.
+ */
 static void sack_consume(struct utcp_connection *c, size_t len) {
 	debug("sack_consume %zu\n", len);
 
@@ -583,15 +661,15 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
 			c->sacks[i].offset -= len;
 			i++;
 		} else if(len < c->sacks[i].offset + c->sacks[i].len) {
-			c->sacks[i].offset = 0;
 			c->sacks[i].len -= len - c->sacks[i].offset;
+			c->sacks[i].offset = 0;
 			i++;
 		} else {
 			if(i < NSACKS - 1) {
 				// move remaining sacks one ahead
 				memmove(&c->sacks[i], &c->sacks[i + 1], ((NSACKS - 1) - i) * sizeof c->sacks[i]);
-				// clean obsolete sack len
-				c->sacks[(NSACKS - 1) - i].len = 0;
+				// clean last sack len
+				c->sacks[NSACKS - 1].len = 0;
 			} else {
 				c->sacks[i].len = 0;
 				break;
@@ -823,7 +901,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	c->snd.wnd = hdr.wnd; // TODO: move below
 
-	// 2. Advance snd.una also when hdr.seq doesn't match
+	// 2. Advance snd.una and update retransmit timer
+	// process acks even when hdr.seq doesn't match to adapt early and
+	// get triplicate ack check work even when on both ends packets are not acceptable
 
 	uint32_t prevrcvnxt = c->rcv.nxt;
 	uint32_t advanced = 0;
@@ -833,6 +913,20 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		advanced = seqdiff(hdr.ack, c->snd.una);
 
 		if(advanced) {
+			// RTT measurement
+			if(c->rtt_start.tv_sec) {
+				if(c->rtt_seq == hdr.ack) {
+					struct timeval now, diff;
+					gettimeofday(&now, NULL);
+					timersub(&now, &c->rtt_start, &diff);
+					update_rtt(c, diff.tv_sec * 1000000 + diff.tv_usec);
+					c->rtt_start.tv_sec = 0;
+				} else if(c->rtt_seq < hdr.ack) {
+					debug("Cancelling RTT measurement: %u < %u\n", c->rtt_seq, hdr.ack);
+					c->rtt_start.tv_sec = 0;
+				}
+			}
+
 			int32_t data_acked = advanced;
 
 			switch(c->state) {
@@ -893,22 +987,24 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 					c->snd.nxt = c->snd.una;
 					//Reset the congestion window so we wait for ACKs.
 					c->snd.cwnd = utcp->mtu;
+					start_retransmit_timer(c);
 				}
 			}
 		}
-	}
 
-	// 3. Update retransmit timer
+		// Update retransmit timer
 
-	if(hdr.ctl & ACK)
-	{
 		// reset on progress, so data can be continously sent over the channel
 		// reset on empty response packets, to allow the sender to catch up on queued incoming unacceptable packets
-		if(advanced || !len)
-			timerclear(&c->rtrx_timeout); // Set in utcp_timeout() if c->snd.una != c->snd.nxt.
+		if(advanced || !len) {
+			if(c->snd.una == c->snd.last)
+				stop_retransmit_timer(c);
+			else
+				start_retransmit_timer(c);
+		}
 	}
 
-	// 4. Check incoming data for acceptable seqno
+	// 3. Check incoming data for acceptable seqno and update connection timer
 
 	bool acceptable = false;
 
@@ -964,11 +1060,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return 0;
 	}
 
-	// 5. Update connection timer
+	// Update connection timer
 
 	timerclear(&c->conn_timeout); // Set in utcp_timeout()
 
-	// 6. Handle RST packets
+	// 4. Handle RST packets
 
 	if(hdr.ctl & RST) {
 		switch(c->state) {
@@ -1021,7 +1117,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
-	// 7. Process SYN stuff
+	// 5. Process SYN stuff
 
 	if(hdr.ctl & SYN) {
 		switch(c->state) {
@@ -1055,7 +1151,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		c->rcv.nxt++;
 	}
 
-	// 8. Process new data
+	// 6. Process new data
 
 	if(c->state == SYN_RECEIVED) {
 		// This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
@@ -1102,7 +1198,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		handle_incoming_data(c, hdr.seq, data, len);
 	}
 
-	// 9. Process FIN stuff
+	// 7. Process FIN stuff
 
 	if((hdr.ctl & FIN) && hdr.seq + len == c->rcv.nxt) {
 		switch(c->state) {
@@ -1154,8 +1250,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// - or we got an ack, so we should maybe send a bit more data
 	//   -> sendatleastone = false
 
-ack:
-	ack(c, prevrcvnxt != c->rcv.nxt);
+	ack(c, len || prevrcvnxt != c->rcv.nxt);
 	return 0;
 
 reset:
@@ -1232,6 +1327,8 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	c->snd.last++;
 
 	ack(c, false);
+	if(!timerisset(&c->rtrx_timeout))
+		start_retransmit_timer(c);
 	return 0;
 }
 
@@ -1312,6 +1409,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 		if(!c)
 			continue;
 
+		// delete connections that have been utcp_close()d.
 		if(c->state == CLOSED) {
 			if(c->reapable) {
 				debug("Reaping %p\n", c);
@@ -1340,22 +1438,12 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 		// check retransmit timeout
 		if(timerisset(&c->rtrx_timeout)) {
 			if(timercmp(&c->rtrx_timeout, &now, <)) {
-				if(c->snd.nxt != c->snd.una) {
-					// reset cwnd to adapt for network traffic
-					c->snd.cwnd = utcp->mtu;
-					retransmit(c);
-					c->rtrx_timeout = now;
-					c->rtrx_timeout.tv_sec += 2;
-				} else {
-					timerclear(&c->rtrx_timeout);
-				}
+				debug("retransmit()\n");
+				retransmit(c);
 			}
-		} else if(c->snd.nxt != c->snd.una) {
-			c->rtrx_timeout = now;
-			c->rtrx_timeout.tv_sec += 2;
+			if(timercmp(&c->rtrx_timeout, &next, <))
+				next = c->rtrx_timeout;
 		}
-		if(timercmp(&c->rtrx_timeout, &next, <))
-			next = c->rtrx_timeout;
 
 		if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
 			c->poll(c, buffer_free(&c->sndbuf));
@@ -1391,8 +1479,9 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 	utcp->pre_accept = pre_accept;
 	utcp->send = send;
 	utcp->priv = priv;
-	utcp->mtu = 1000;
-	utcp->timeout = 60;
+	utcp->mtu = DEFAULT_MTU;
+	utcp->timeout = DEFAULT_USER_TIMEOUT; // s
+	utcp->rto = START_RTO; // us
 
 	return utcp;
 }
@@ -1403,6 +1492,7 @@ void utcp_exit(struct utcp *utcp) {
 	for(int i = 0; i < utcp->nconnections; i++) {
 		if(!utcp->connections[i]->reapable)
 			debug("Warning, freeing unclosed connection %p\n", utcp->connections[i]);
+		buffer_exit(&utcp->connections[i]->rcvbuf);
 		buffer_exit(&utcp->connections[i]->sndbuf);
 		free(utcp->connections[i]);
 	}

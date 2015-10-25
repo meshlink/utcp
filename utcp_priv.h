@@ -36,6 +36,13 @@
 #define DEFAULT_RCVBUFSIZE 0
 #define DEFAULT_MAXRCVBUFSIZE 131072
 
+#define DEFAULT_MTU 1000
+
+#define DEFAULT_USER_TIMEOUT 60 // s
+#define CLOCK_GRANULARITY 1000 // us
+#define START_RTO 1000000 // us
+#define MAX_RTO 3000000 // us
+
 struct hdr {
 	uint16_t src; // Source port
 	uint16_t dst; // Destination port
@@ -125,6 +132,8 @@ struct utcp_connection {
 
 	struct timeval conn_timeout;
 	struct timeval rtrx_timeout;
+	struct timeval rtt_start;
+	uint32_t rtt_seq;
 
 	// Buffers
 
@@ -155,7 +164,13 @@ struct utcp {
 	// Global socket options
 
 	uint16_t mtu;
-	int timeout;
+	int timeout; // s
+
+	// RTT variables
+
+	uint32_t srtt; // us
+	uint32_t rttvar; // us
+	uint32_t rto; // us
 
 	// Connection management
 
