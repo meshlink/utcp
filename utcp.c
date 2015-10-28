@@ -200,13 +200,12 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 	if(buf->maxsize <= buf->used)
 		return 0;
 
-	debug("buffer_put_at %lu %lu %lu\n", (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len);
+	debug("buffer_put_at used:%lu offset:%lu len:%lu max:%lu\n", (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len, (unsigned long)buf->maxsize);
 
 	size_t required = offset + len;
 	if(required > buf->maxsize) {
 		if(offset >= buf->maxsize)
 			return 0;
-		abort();
 		len = buf->maxsize - offset;
 		required = buf->maxsize;
 	}
@@ -628,6 +627,7 @@ static void retransmit(struct utcp_connection *c) {
 		case FIN_WAIT_2:
 			// We shouldn't need to retransmit anything in this state.
 #ifdef UTCP_DEBUG
+			debug("Error: retransmit unexpected connection state %p %s\n", c, strstate[c->state]);
 			abort();
 #endif
 			stop_retransmit_timer(c);
@@ -741,7 +741,7 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 
 static void handle_in_order(struct utcp_connection *c, const void *data, size_t len) {
 	// Check if we can process out-of-order data now.
-	if(len < c->rcvbuf.maxsize && c->sacks[0].len && len >= c->sacks[0].offset) {
+	if(c->sacks[0].len && len >= c->sacks[0].offset) {
 		debug("incoming packet len %lu connected with SACK at %u\n", (unsigned long)len, c->sacks[0].offset);
 		if(buffer_put_at(&c->rcvbuf, 0, data, len) != len)
 			// log error but proceed with retrieved data
@@ -757,6 +757,7 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 		ssize_t rxd = c->recv(c, data, len);
 		if(rxd != len) {
 			// TODO: handle the application not accepting all data.
+			debug("Error: handle_in_order rxd:%ld != len:%lu\n", (long)rxd, (unsigned long)len);
 			abort();
 		}
 	}
@@ -892,6 +893,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		break;
 	default:
 #ifdef UTCP_DEBUG
+		debug("Error: utcp_recv unexpected connection state %p %s\n", c, strstate[c->state]);
 		abort();
 #endif
 		break;
@@ -1126,6 +1128,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			return 0;
 		default:
 #ifdef UTCP_DEBUG
+			debug("Error: utcp_recv RST unexpected connection state %p %s\n", c, strstate[c->state]);
 			abort();
 #endif
 			break;
@@ -1157,6 +1160,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			goto reset;
 		default:
 #ifdef UTCP_DEBUG
+			debug("Error: utcp_recv SYN unexpected connection state %p %s\n", c, strstate[c->state]);
 			abort();
 #endif
 			return 0;
@@ -1190,6 +1194,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case SYN_RECEIVED:
 			// This should never happen.
 #ifdef UTCP_DEBUG
+			debug("Error: utcp_recv handle_incoming_data unexpected connection state %p %s\n", c, strstate[c->state]);
 			abort();
 #endif
 			return 0;
@@ -1205,6 +1210,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			goto reset;
 		default:
 #ifdef UTCP_DEBUG
+			debug("Error: utcp_recv handle_incoming_data unexpected connection state %p %s\n", c, strstate[c->state]);
 			abort();
 #endif
 			return 0;
@@ -1221,6 +1227,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case SYN_RECEIVED:
 			// This should never happen.
 #ifdef UTCP_DEBUG
+			debug("Error: utcp_recv FIN unexpected connection state %p %s\n", c, strstate[c->state]);
 			abort();
 #endif
 			break;
@@ -1241,6 +1248,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			goto reset;
 		default:
 #ifdef UTCP_DEBUG
+			debug("Error: utcp_recv FIN unexpected connection state %p %s\n", c, strstate[c->state]);
 			abort();
 #endif
 			break;
