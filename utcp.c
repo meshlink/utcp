@@ -200,7 +200,7 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 	if(buf->maxsize <= buf->used)
 		return 0;
 
-	debug("buffer_put_at %zu %zu %zu\n", buf->used, offset, len);
+	debug("buffer_put_at %lu %lu %lu\n", (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len);
 
 	size_t required = offset + len;
 	if(required > buf->maxsize) {
@@ -663,7 +663,7 @@ cleanup:
  * - the SACK entry is completely before ^, in that case delete it.
  */
 static void sack_consume(struct utcp_connection *c, size_t len) {
-	debug("sack_consume %zu\n", len);
+	debug("sack_consume %lu\n", (unsigned long)len);
 
 	buffer_get(&c->rcvbuf, NULL, len);
 
@@ -742,7 +742,7 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 static void handle_in_order(struct utcp_connection *c, const void *data, size_t len) {
 	// Check if we can process out-of-order data now.
 	if(len < c->rcvbuf.maxsize && c->sacks[0].len && len >= c->sacks[0].offset) {
-		debug("incoming packet len %zu connected with SACK at %u\n", len, c->sacks[0].offset);
+		debug("incoming packet len %lu connected with SACK at %u\n", (unsigned long)len, c->sacks[0].offset);
 		if(buffer_put_at(&c->rcvbuf, 0, data, len) != len)
 			// log error but proceed with retrieved data
 			debug("failed to buffer packet data\n");
