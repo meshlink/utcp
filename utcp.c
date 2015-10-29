@@ -722,6 +722,8 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 					memmove(&c->sacks[i + 1], &c->sacks[i], (NSACKS - i - 1) * sizeof c->sacks[i]);
 					c->sacks[i].offset = offset;
 					c->sacks[i].len = rxd;
+				} else {
+					debug("SACK entries full, dropping packet\n");
 				}
 				break;
 			} else { // merge
