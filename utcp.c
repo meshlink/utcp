@@ -88,6 +88,10 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 	if(len > sizeof hdr) {
 		uint32_t datalen = len - sizeof hdr;
 		uint8_t *str = malloc((datalen << 1) + 7);
+		if(!str) {
+			debug("out of memory");
+			return;
+		}
 		memcpy(str, " data=", 6);
 		uint8_t *strptr = str + 6;
 		const uint8_t *data = pkt;
