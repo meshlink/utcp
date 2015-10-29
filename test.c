@@ -72,6 +72,10 @@ ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 			return len;
 		if(!reorder_data && drand48() < reorder) {
 			reorder_data = malloc(len);
+			if(!reorder_data) {
+				debug("Out of memory\n");
+				return len;
+			}
 			reorder_len = len;
 			memcpy(reorder_data, data, len);
 			reorder_countdown = 1 + drand48() * reorder_dist;
