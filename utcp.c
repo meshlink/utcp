@@ -661,7 +661,7 @@ cleanup:
  * that are shifted to before the start of the receive buffer.
  *
  * There are three cases:
- * - the SACK entry is ahead of ^, in that case just change the offset.
+ * - the SACK entry is after ^, in that case just change the offset.
  * - the SACK entry starts before and ends after ^, so we have to
  *   change both its offset and size.
  * - the SACK entry is completely before ^, in that case delete it.
