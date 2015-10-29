@@ -68,50 +68,66 @@ static void debug(const char *format, ...) {
 	va_end(ap);
 }
 
+// write data to hex string
+// @require assure available str buffer length >= 2 * data length
+static uint32_t binTohex(char *str, uint32_t strglen, const uint8_t *data, uint32_t datalen) {
+    char xchar;
+    uint32_t pos = 0;
+    const uint8_t *dataend = data + datalen;
+    while(data != dataend && pos < (strglen>>1)) {
+        // convert upper 4 bit of current data pointer
+        // for ASCI, offset values 0-9 by 48 and values 10-15 by 55
+        xchar = *data >> 4;
+        *str = xchar > 9? xchar + 55 : xchar + 48;
+        ++str;
+        // convert lower 4 bit of current data pointer
+        xchar = *data & 0xf;
+        *str = xchar > 9? xchar + 55 : xchar + 48;
+        ++str;
+        // advance to next data byte
+        ++data;
+        ++pos;
+    }
+    return pos;
+}
+
 static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, size_t len) {
-	struct hdr hdr;
-	if(len < sizeof hdr) {
-		debug("%p %s: short packet (" PRINT_SIZE_T " bytes)\n", utcp, dir, len);
-		return;
-	}
+    struct hdr hdr;
+    if(len < sizeof hdr) {
+        debug("%p %s: short packet (" PRINT_SIZE_T " bytes)\n", utcp, dir, len);
+        return;
+    }
 
-	memcpy(&hdr, pkt, sizeof hdr);
-	fprintf (stderr, "%p %s: len=" PRINT_SIZE_T ", src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
-	if(hdr.ctl & SYN)
-		debug("SYN");
-	if(hdr.ctl & RST)
-		debug("RST");
-	if(hdr.ctl & FIN)
-		debug("FIN");
-	if(hdr.ctl & ACK)
-		debug("ACK");
+    memcpy(&hdr, pkt, sizeof hdr);
+    fprintf (stderr, "%p %s: len=" PRINT_SIZE_T ", src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
+    if(hdr.ctl & SYN)
+        debug("SYN");
+    if(hdr.ctl & RST)
+        debug("RST");
+    if(hdr.ctl & FIN)
+        debug("FIN");
+    if(hdr.ctl & ACK)
+        debug("ACK");
 
-	if(len > sizeof hdr) {
-		uint32_t datalen = len - sizeof hdr;
-		uint8_t *str = malloc((datalen << 1) + 7);
-		if(!str) {
-			debug("out of memory");
-			return;
-		}
-		memcpy(str, " data=", 6);
-		uint8_t *strptr = str + 6;
-		const uint8_t *data = pkt;
-		const uint8_t *dataend = data + datalen;
+    if(len > sizeof hdr) {
+        uint32_t datalen = len - sizeof hdr;
+        const uint8_t *data = (const uint8_t*)pkt + sizeof hdr;
+        uint32_t strglen = (datalen << 1) + 7;
+        uint8_t *str = malloc(strglen + 1);
+        if(!str) {
+            debug("print_packet: Zout of memory");
+            return;
+        }
+        memcpy(str, " data=", 6);
 
-		while(data != dataend) {
-			*strptr = (*data >> 4) > 9? (*data >> 4) + 55 : (*data >> 4) + 48;
-			++strptr;
-			*strptr = (*data & 0xf) > 9? (*data & 0xf) + 55 : (*data & 0xf) + 48;
-			++strptr;
-			++data;
-		}
-		*strptr = 0;
+        binTohex(str + 6, strglen - 7, data, datalen);
+        str[strglen-1] = 0;
 
-		debug(str);
-		free(str);
-	}
+        debug(str);
+        free(str);
+    }
 
-	debug("\n");
+    debug("\n");
 }
 #else
 #define debug(...)
