@@ -51,6 +51,9 @@
 } while (0)
 #endif
 
+#ifdef max // it's a macro in mingw stdlib.h
+#undef max
+#endif
 static inline size_t max(size_t a, size_t b) {
 	return a > b ? a : b;
 }
