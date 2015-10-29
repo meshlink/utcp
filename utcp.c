@@ -51,9 +51,9 @@
 } while (0)
 #endif
 
-#ifndef max
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#endif
+static inline size_t max(size_t a, size_t b) {
+	return a > b ? a : b;
+}
 
 #ifdef UTCP_DEBUG
 #include <stdarg.h>
