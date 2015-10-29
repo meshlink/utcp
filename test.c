@@ -24,7 +24,7 @@ long outpktno;
 long dropfrom;
 long dropto;
 double reorder;
-long reorder_dist;
+long reorder_dist = 10;
 double dropin;
 double dropout;
 long total_out;
@@ -109,12 +109,12 @@ int main(int argc, char *argv[]) {
 	bool server = argc == 2;
 	bool connected = false;
 
-	dropin = atof(getenv("DROPIN") ?: "0");
-	dropout = atof(getenv("DROPOUT") ?: "0");
-	dropfrom = atoi(getenv("DROPFROM") ?: "0");
-	dropto = atoi(getenv("DROPTO") ?: "0");
-	reorder = atof(getenv("REORDER") ?: "0");
-	reorder_dist = atoi(getenv("REORDER_DIST") ?: "10");
+	if(getenv("DROPIN")) dropin = atof(getenv("DROPIN"));
+	if(getenv("DROPOUT")) dropout = atof(getenv("DROPOUT"));
+	if(getenv("DROPFROM")) dropfrom = atoi(getenv("DROPFROM"));
+	if(getenv("DROPTO")) dropto = atoi(getenv("DROPTO"));
+	if(getenv("REORDER")) reorder = atof(getenv("REORDER"));
+	if(getenv("REORDER_DIST")) reorder_dist = atoi(getenv("REORDER_DIST"));
 
 	if(dropto < dropfrom)
 		dropto = 1 << 30;
