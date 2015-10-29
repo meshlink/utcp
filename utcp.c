@@ -47,7 +47,7 @@
 	(r)->tv_sec = (a)->tv_sec - (b)->tv_sec;\
 	(r)->tv_usec = (a)->tv_usec - (b)->tv_usec;\
 	if((r)->tv_usec < 0)\
-		(r)->tv_sec--, (r)->tv_usec += 1000000;\
+		(r)->tv_sec--, (r)->tv_usec += USEC_PER_SEC;\
 } while (0)
 #endif
 
@@ -129,8 +129,8 @@ static void stop_connection_timer(struct utcp_connection *c) {
 static void start_retransmit_timer(struct utcp_connection *c) {
 	gettimeofday(&c->rtrx_timeout, NULL);
 	c->rtrx_timeout.tv_usec += c->utcp->rto;
-	while(c->rtrx_timeout.tv_usec >= 1000000) {
-		c->rtrx_timeout.tv_usec -= 1000000;
+	while(c->rtrx_timeout.tv_usec >= USEC_PER_SEC) {
+		c->rtrx_timeout.tv_usec -= USEC_PER_SEC;
 		c->rtrx_timeout.tv_sec++;
 	}
 	debug("retransmit timeout set to %lu.%06lu (%u)\n", c->rtrx_timeout.tv_sec, c->rtrx_timeout.tv_usec, c->utcp->rto);
@@ -938,7 +938,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 					struct timeval now, diff;
 					gettimeofday(&now, NULL);
 					timersub(&now, &c->rtt_start, &diff);
-					update_rtt(c, diff.tv_sec * 1000000 + diff.tv_usec);
+					update_rtt(c, diff.tv_sec * USEC_PER_SEC + diff.tv_usec);
 					c->rtt_start.tv_sec = 0;
 				} else if(c->rtt_seq < hdr.ack) {
 					debug("Cancelling RTT measurement: %u < %u\n", c->rtt_seq, hdr.ack);
@@ -1506,8 +1506,8 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 	utcp->send = send;
 	utcp->priv = priv;
 	utcp->mtu = DEFAULT_MTU;
-	utcp->timeout = DEFAULT_USER_TIMEOUT; // s
-	utcp->rto = START_RTO; // us
+	utcp->timeout = DEFAULT_USER_TIMEOUT; // sec
+	utcp->rto = START_RTO; // usec
 
 	return utcp;
 }

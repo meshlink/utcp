@@ -38,10 +38,11 @@
 
 #define DEFAULT_MTU 1000
 
-#define DEFAULT_USER_TIMEOUT 60 // s
-#define CLOCK_GRANULARITY 1000 // us
-#define START_RTO 1000000 // us
-#define MAX_RTO 3000000 // us
+#define USEC_PER_SEC 1000000
+#define DEFAULT_USER_TIMEOUT 60 // sec
+#define CLOCK_GRANULARITY 1000 // usec
+#define START_RTO 1000000 // usec
+#define MAX_RTO 3000000 // usec
 
 struct hdr {
 	uint16_t src; // Source port
@@ -164,13 +165,13 @@ struct utcp {
 	// Global socket options
 
 	uint16_t mtu;
-	int timeout; // s
+	int timeout; // sec
 
 	// RTT variables
 
-	uint32_t srtt; // us
-	uint32_t rttvar; // us
-	uint32_t rto; // us
+	uint32_t srtt; // usec
+	uint32_t rttvar; // usec
+	uint32_t rto; // usec
 
 	// Connection management
 
