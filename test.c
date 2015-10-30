@@ -69,8 +69,10 @@ ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
 	outpktno++;
 	if(outpktno >= dropfrom && outpktno < dropto) {
-		if(drand48() < dropout)
+		if(drand48() < dropout) {
+			debug("Dropped outgoing packet\n");
 			return len;
+		}
 		if(!reorder_data && drand48() < reorder) {
 			reorder_data = malloc(len);
 			if(!reorder_data) {
@@ -214,6 +216,8 @@ int main(int argc, char *argv[]) {
 			if(inpktno >= dropto || inpktno < dropfrom || drand48() >= dropin) {
 				total_in += len;
 				utcp_recv(u, buf, len);
+			} else {
+				debug("Dropped incoming packet\n");
 			}
 		}
 
