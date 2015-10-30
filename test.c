@@ -23,8 +23,16 @@ long inpktno;
 long outpktno;
 long dropfrom;
 long dropto;
+double reorder;
+long reorder_dist = 10;
 double dropin;
 double dropout;
+long total_out;
+long total_in;
+
+char *reorder_data;
+size_t reorder_len;
+int reorder_countdown;
 
 void debug(const char *format, ...) {
 	struct timeval now;
@@ -59,9 +67,32 @@ void do_accept(struct utcp_connection *nc, uint16_t port) {
 ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 	int s = *(int *)utcp->priv;
 	outpktno++;
-	if(outpktno < dropto && outpktno >= dropfrom && drand48() < dropout)
-		return len;
+	if(outpktno >= dropfrom && outpktno < dropto) {
+		if(drand48() < dropout)
+			return len;
+		if(!reorder_data && drand48() < reorder) {
+			reorder_data = malloc(len);
+			if(!reorder_data) {
+				debug("Out of memory\n");
+				return len;
+			}
+			reorder_len = len;
+			memcpy(reorder_data, data, len);
+			reorder_countdown = 1 + drand48() * reorder_dist;
+			return len;
+		}
+	}
 
+	if(reorder_data) {
+		if(--reorder_countdown < 0) {
+			total_out += reorder_len;
+			send(s, reorder_data, reorder_len, MSG_DONTWAIT);
+			free(reorder_data);
+			reorder_data = NULL;
+		}
+	}
+
+	total_out += len;
 	ssize_t result = send(s, data, len, MSG_DONTWAIT);
 	if(result <= 0)
 		debug("Error sending UDP packet: %s\n", strerror(errno));
@@ -78,10 +109,15 @@ int main(int argc, char *argv[]) {
 	bool server = argc == 2;
 	bool connected = false;
 
-	dropin = atof(getenv("DROPIN") ?: "0");
-	dropout = atof(getenv("DROPOUT") ?: "0");
-	dropfrom = atoi(getenv("DROPFROM") ?: "0");
-	dropto = atoi(getenv("DROPTO") ?: "0");
+	if(getenv("DROPIN")) dropin = atof(getenv("DROPIN"));
+	if(getenv("DROPOUT")) dropout = atof(getenv("DROPOUT"));
+	if(getenv("DROPFROM")) dropfrom = atoi(getenv("DROPFROM"));
+	if(getenv("DROPTO")) dropto = atoi(getenv("DROPTO"));
+	if(getenv("REORDER")) reorder = atof(getenv("REORDER"));
+	if(getenv("REORDER_DIST")) reorder_dist = atoi(getenv("REORDER_DIST"));
+
+	if(dropto < dropfrom)
+		dropto = 1 << 30;
 
 	struct addrinfo *ai;
 	struct addrinfo hint = {
@@ -127,19 +163,21 @@ int main(int argc, char *argv[]) {
 	struct timeval timeout = utcp_timeout(u);
 
 	while(!connected || utcp_is_active(u)) {
-		debug("\n");
 		size_t max = c ? utcp_get_sndbuf_free(c) : 0;
 		if(max > sizeof buf)
 			max = sizeof buf;
 
+		int timeout_ms = timeout.tv_sec * 1000 + timeout.tv_usec / 1000 + 1;
+
+		debug("polling, dir = %d, timeout = %d\n", dir, timeout_ms);
 		if((dir & DIR_READ) && max)
-			poll(fds, 2, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
+			poll(fds, 2, timeout_ms);
 		else
-			poll(fds + 1, 1, timeout.tv_sec * 1000 + timeout.tv_usec / 1000);
+			poll(fds + 1, 1, timeout_ms);
 
 		if(fds[0].revents) {
 			fds[0].revents = 0;
-			debug("stdin");
+			debug("stdin\n");
 			ssize_t len = read(0, buf, max);
 			if(len <= 0) {
 				fds[0].fd = -1;
@@ -160,7 +198,7 @@ int main(int argc, char *argv[]) {
 
 		if(fds[1].revents) {
 			fds[1].revents = 0;
-			debug("netout\n");
+			debug("netin\n");
 			struct sockaddr_storage ss;
 			socklen_t sl = sizeof ss;
 			int len = recvfrom(s, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&ss, &sl);
@@ -172,8 +210,10 @@ int main(int argc, char *argv[]) {
 				if(!connect(s, (struct sockaddr *)&ss, sl))
 					connected = true;
 			inpktno++;
-			if(inpktno >= dropto || inpktno < dropfrom || drand48() >= dropin)
+			if(inpktno >= dropto || inpktno < dropfrom || drand48() >= dropin) {
+				total_in += len;
 				utcp_recv(u, buf, len);
+			}
 		}
 
 		timeout = utcp_timeout(u);
@@ -181,6 +221,9 @@ int main(int argc, char *argv[]) {
 
 	utcp_close(c);
 	utcp_exit(u);
+	free(reorder_data);
+
+	debug("Total bytes in: %ld, out: %ld\n", total_in, total_out);
 
 	return 0;
 }

@@ -30,8 +30,19 @@
 #define FIN 4
 #define RST 8
 
+#define NSACKS 4
 #define DEFAULT_SNDBUFSIZE 4096
 #define DEFAULT_MAXSNDBUFSIZE 131072
+#define DEFAULT_RCVBUFSIZE 0
+#define DEFAULT_MAXRCVBUFSIZE 131072
+
+#define DEFAULT_MTU 1000
+
+#define USEC_PER_SEC 1000000
+#define DEFAULT_USER_TIMEOUT 60 // sec
+#define CLOCK_GRANULARITY 1000 // usec
+#define START_RTO 1000000 // usec
+#define MAX_RTO 3000000 // usec
 
 struct hdr {
 	uint16_t src; // Source port
@@ -78,6 +89,11 @@ struct buffer {
 	uint32_t maxsize;
 };
 
+struct sack {
+	uint32_t offset;
+	uint32_t len;
+};
+
 struct utcp_connection {
 	void *priv;
 	struct utcp *utcp;
@@ -117,10 +133,14 @@ struct utcp_connection {
 
 	struct timeval conn_timeout;
 	struct timeval rtrx_timeout;
+	struct timeval rtt_start;
+	uint32_t rtt_seq;
 
-	// Send buffer
+	// Buffers
 
 	struct buffer sndbuf;
+	struct buffer rcvbuf;
+	struct sack sacks[NSACKS];
 
 	// Per-socket options
 
@@ -145,7 +165,13 @@ struct utcp {
 	// Global socket options
 
 	uint16_t mtu;
-	int timeout;
+	int timeout; // sec
+
+	// RTT variables
+
+	uint32_t srtt; // usec
+	uint32_t rttvar; // usec
+	uint32_t rto; // usec
 
 	// Connection management
 
