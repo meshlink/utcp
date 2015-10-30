@@ -1294,7 +1294,7 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 }
 
 int utcp_close(struct utcp_connection *c) {
-	if(utcp_shutdown(c, SHUT_RDWR))
+	if(utcp_shutdown(c, SHUT_RDWR) && errno != ENOTCONN)
 		return -1;
 	c->recv = NULL;
 	c->poll = NULL;
