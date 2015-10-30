@@ -857,8 +857,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// In case this is for a CLOSED connection, ignore the packet.
 	// TODO: make it so incoming packets can never match a CLOSED connection.
 
-	if(c->state == CLOSED)
+	if(c->state == CLOSED) {
+		debug("Got packet for closed connection\n");
 		return 0;
+	}
 
 	// It is for an existing connection.
 
