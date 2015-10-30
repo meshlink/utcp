@@ -214,7 +214,8 @@ int main(int argc, char *argv[]) {
 			inpktno++;
 			if(inpktno >= dropto || inpktno < dropfrom || drand48() >= dropin) {
 				total_in += len;
-				utcp_recv(u, buf, len);
+				if(utcp_recv(u, buf, len) == -1)
+					debug("Error receiving UTCP packet: %s\n", strerror(errno));
 			} else {
 				debug("Dropped incoming packet\n");
 			}
