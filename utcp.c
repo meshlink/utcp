@@ -499,6 +499,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 		c->snd.nxt += seglen;
 		left -= seglen;
 
+		// when FIN is not ack'ed yet len must be at least 1
 		if(seglen && fin_wanted(c, c->snd.nxt)) {
 			seglen--;
 			pkt->hdr.ctl |= FIN;
@@ -633,10 +634,13 @@ static void retransmit(struct utcp_connection *c) {
 			uint32_t len = seqdiff(c->snd.last, c->snd.una);
 			if(len > utcp->mtu)
 				len = utcp->mtu;
-			if(fin_wanted(c, c->snd.una + len)) {
+
+			// when FIN is not ack'ed yet len must be at least 1
+			if(len && fin_wanted(c, c->snd.una + len)) {
 				len--;
 				pkt->hdr.ctl |= FIN;
 			}
+
 			c->snd.nxt = c->snd.una + len;
 			c->snd.cwnd = utcp->mtu; // reduce cwnd on retransmit
 			buffer_copy(&c->sndbuf, pkt->data, 0, len);
@@ -969,12 +973,19 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 			int32_t data_acked = advanced;
 
+			// sub virtual SYN & FIN ack length
 			switch(c->state) {
 				case SYN_SENT:
 				case SYN_RECEIVED:
 					data_acked--;
 					break;
-				// TODO: handle FIN as well.
+				case FIN_WAIT_1:
+				case CLOSING:
+				case LAST_ACK:
+					// last ack is the FIN
+					if(hdr.ack == c->snd.last)
+						data_acked--;
+					break;
 				default:
 					break;
 			}
@@ -1042,6 +1053,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	// 3. Check incoming data for acceptable seqno and update connection timer
 
+	size_t datalen = len;
 	bool acceptable = false;
 
 	if(c->state == SYN_SENT)
@@ -1050,7 +1062,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
 
 		// always accept control data packets that are ahead
-		if(len == 0)
+		if(datalen == 0)
 			acceptable = rcv_offset >= 0;
 		else {
 			// accept all packets in sequence
@@ -1059,9 +1071,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			// accept overlapping packets
 			else if(rcv_offset < 0) {
 				// cut already accepted front overlapping
-				if(len >= -rcv_offset) {
+				// but even accept packets of len 0 to process valuable flag info
+				// like the FIN without requiring a retransmit
+				if(datalen >= -rcv_offset) {
 					data -= rcv_offset;
-					len += rcv_offset;
+					datalen += rcv_offset;
 					acceptable = true;
 				}
 			}
@@ -1215,7 +1229,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
-	if(len) {
+	if(datalen) {
 		switch(c->state) {
 		case SYN_SENT:
 		case SYN_RECEIVED:
@@ -1243,7 +1257,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			return 0;
 		}
 
-		handle_incoming_data(c, hdr.seq, data, len);
+		handle_incoming_data(c, hdr.seq, data, datalen);
 	}
 
 	// 7. Process FIN stuff
@@ -1372,6 +1386,7 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 		return 0;
 	}
 
+	// inc .last for the FIN
 	c->snd.last++;
 
 	ack(c, false);
