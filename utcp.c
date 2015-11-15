@@ -1009,8 +1009,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 			// adapt congestion window to limit packets sent and avoid flooding
 			// TODO: for an adaptive cwnd detection maybe test for increased processing time of a packet or for ack throughput over time
-			if(c->snd.cwnd < 20000)
-				c->snd.cwnd += utcp->mtu;
+			c->snd.cwnd += data_acked;
+			if(c->snd.cwnd > 20000)
+				c->snd.cwnd = 20000;
 			if(c->snd.cwnd > c->rcv.wnd)
 				c->snd.cwnd = c->rcv.wnd;
 			if(c->snd.cwnd > c->sndbuf.maxsize)
