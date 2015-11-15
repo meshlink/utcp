@@ -70,9 +70,10 @@ static void debug(const char *format, ...) {
 
 // write data to hex string
 // @require assure available str buffer length >= 2 * data length
-static uint32_t binTohex(char *str, uint32_t strglen, const uint8_t *data, uint32_t datalen) {
+static uint32_t binTohex(char *str, uint32_t strglen, const void *vdata, uint32_t datalen) {
     char xchar;
     uint32_t pos = 0;
+    const uint8_t *data = vdata;
     const uint8_t *dataend = data + datalen;
     while(data != dataend && pos < (strglen>>1)) {
         // convert upper 4 bit of current data pointer
@@ -113,9 +114,9 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
         uint32_t datalen = len - sizeof hdr;
         const uint8_t *data = (const uint8_t*)pkt + sizeof hdr;
         uint32_t strglen = (datalen << 1) + 7;
-        uint8_t *str = malloc(strglen + 1);
+        char *str = malloc(strglen + 1);
         if(!str) {
-            debug("print_packet: Zout of memory");
+            debug("print_packet: out of memory");
             return;
         }
         memcpy(str, " data=", 6);
