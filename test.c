@@ -34,6 +34,7 @@ char *reorder_data;
 size_t reorder_len;
 int reorder_countdown;
 
+#if UTCP_DEBUG
 void debug(const char *format, ...) {
 	struct timeval now;
 	gettimeofday(&now, NULL);
@@ -43,6 +44,9 @@ void debug(const char *format, ...) {
 	vfprintf(stderr, format, ap);
 	va_end(ap);
 }
+#else
+#define debug(...)
+#endif
 
 ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 	if(!data || !len) {
