@@ -457,6 +457,7 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 	debug("%p accepted, %p %p\n", c, recv, priv);
 	c->recv = recv;
 	c->priv = priv;
+	c->rcv.wnd = c->rcvbuf.maxsize;
 	set_state(c, ESTABLISHED);
 }
 
@@ -1010,6 +1011,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			// TODO: for an adaptive cwnd detection maybe test for increased processing time of a packet or for ack throughput over time
 			if(c->snd.cwnd < 20000)
 				c->snd.cwnd += utcp->mtu;
+			if(c->snd.cwnd > c->rcv.wnd)
+				c->snd.cwnd = c->rcv.wnd;
 			if(c->snd.cwnd > c->sndbuf.maxsize)
 				c->snd.cwnd = c->sndbuf.maxsize;
 
@@ -1187,6 +1190,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				goto reset;
 			c->rcv.irs = hdr.seq;
 			c->rcv.nxt = hdr.seq;
+			c->rcv.wnd = c->rcvbuf.maxsize;
 			set_state(c, ESTABLISHED);
 			// TODO: notify application of this somehow.
 			break;
@@ -1615,9 +1619,13 @@ size_t utcp_get_rcvbuf_free(struct utcp_connection *c) {
 void utcp_set_rcvbuf(struct utcp_connection *c, size_t size) {
 	if(!c)
 		return;
+	if(size < c->utcp->mtu)
+		size = c->utcp->mtu;
+	if(size >= 1U << 30)
+		size = 1U << 30;
 	c->rcvbuf.maxsize = size;
-	if(c->rcvbuf.maxsize != size)
-		c->rcvbuf.maxsize = -1;
+	if(c->state == ESTABLISHED)
+		c->rcv.wnd = size;
 }
 
 bool utcp_get_nodelay(struct utcp_connection *c) {
