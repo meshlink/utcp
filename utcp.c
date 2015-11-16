@@ -58,6 +58,13 @@ static inline size_t max(size_t a, size_t b) {
 	return a > b ? a : b;
 }
 
+#ifdef min // it's a macro in mingw stdlib.h
+#undef min
+#endif
+static inline size_t min(size_t a, size_t b) {
+	return a < b ? a : b;
+}
+
 #ifdef UTCP_DEBUG
 #include <stdarg.h>
 
@@ -410,6 +417,7 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	c->rcv.wnd = utcp->mtu;
 	c->snd.last = c->snd.nxt;
 	c->snd.cwnd = utcp->mtu;
+	c->snd.ssthresh = 1 << 30;
 	c->utcp = utcp;
 
 	// Add it to the sorted list of connections
@@ -605,6 +613,7 @@ static void retransmit(struct utcp_connection *c) {
 	pkt->hdr.wnd = c->rcv.wnd;
 	pkt->hdr.aux = 0;
 
+
 	switch(c->state) {
 		case SYN_SENT:
 			// Send our SYN again
@@ -644,6 +653,7 @@ static void retransmit(struct utcp_connection *c) {
 			}
 
 			c->snd.nxt = c->snd.una + len;
+			c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
 			c->snd.cwnd = utcp->mtu; // reduce cwnd on retransmit
 			buffer_copy(&c->sndbuf, pkt->data, 0, len);
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
@@ -1007,11 +1017,13 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			c->snd.una = hdr.ack;
 			c->dupack = 0;
 
-			// adapt congestion window to limit packets sent and avoid flooding
-			// TODO: for an adaptive cwnd detection maybe test for increased processing time of a packet or for ack throughput over time
-			c->snd.cwnd += data_acked;
-			if(c->snd.cwnd > 20000)
-				c->snd.cwnd = 20000;
+			// Increase the congestion window
+			if(c->snd.cwnd < c->snd.ssthresh) // slow start
+				c->snd.cwnd += min(data_acked, c->utcp->mtu);
+			else // congestion avoidance
+				c->snd.cwnd += max(1, c->utcp->mtu * c->utcp->mtu / c->snd.cwnd);
+
+			// Don't let the send window be larger than either our or the receiver's buffer.
 			if(c->snd.cwnd > c->rcv.wnd)
 				c->snd.cwnd = c->rcv.wnd;
 			if(c->snd.cwnd > c->sndbuf.maxsize)
@@ -1035,11 +1047,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				c->dupack++;
 				if(c->dupack == 3) {
 					debug("Triplicate ACK\n");
-					//TODO: Resend one packet and go to fast recovery mode. See RFC 6582.
-					//We do a very simple variant here; reset the nxt pointer to the last acknowledged packet from the peer.
+					// Fast retransmit
 					c->snd.nxt = c->snd.una;
-					//Reset the congestion window so we wait for ACKs.
-					c->snd.cwnd = utcp->mtu;
+					// Fast recovery
+					c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
+					c->snd.cwnd = c->snd.ssthresh;
 				}
 			}
 		}
