@@ -497,7 +497,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 	pkt->hdr.src = c->src;
 	pkt->hdr.dst = c->dst;
 	pkt->hdr.ack = c->rcv.nxt;
-	pkt->hdr.wnd = c->snd.wnd;
+	pkt->hdr.wnd = c->rcv.wnd;
 	pkt->hdr.ctl = ACK;
 	pkt->hdr.aux = 0;
 
