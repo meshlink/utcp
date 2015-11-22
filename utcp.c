@@ -943,10 +943,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	}
 
 	// 1b. Drop packets with an invalid ACK.
-	// ackno should not roll back, and it should also not be bigger than snd.last,
-	// but it might be bigger than snd.nxt since we reset snd.nxt in retransmit and on triplicate ack.
+	// ackno should never be bigger than snd.last.
+	// But it might be bigger than snd.nxt since we reset snd.nxt in retransmit and on triplicate ack.
+	// And by package reordering it might be lower than snd.una, still it might have some useful data.
 
-	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.last) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
+	if((hdr.ctl & ACK) && (seqdiff(hdr.ack, c->snd.last) > 0)) {
 		debug("Packet ack seqno out of range: hdr.ack=%u snd.una=%u snd.nxt=%u snd.last=%u\n",
 			hdr.ack, c->snd.una, c->snd.nxt, c->snd.last);
 		// Ignore unacceptable RST packets.
@@ -966,7 +967,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(hdr.ctl & ACK)
 	{
-		advanced = seqdiff(hdr.ack, c->snd.una);
+		int32_t progress = seqdiff(hdr.ack, c->snd.una);
+		advanced = (progress > 0)? progress: 0;
 
 		if(advanced) {
 			// RTT measurement
@@ -1043,7 +1045,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				break;
 			}
 		} else {
-			if(!len) {
+			if(!progress && !len) {
 				c->dupack++;
 				if(c->dupack == 3) {
 					debug("Triplicate ACK\n");
