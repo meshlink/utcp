@@ -173,7 +173,7 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 		} else {
 			do {
 				newsize *= 2;
-			} while(newsize < buf->used + len);
+			} while(newsize < required);
 		}
 		if(newsize > buf->maxsize)
 			newsize = buf->maxsize;
