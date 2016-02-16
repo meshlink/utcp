@@ -224,16 +224,16 @@ static int32_t seqdiff(uint32_t a, uint32_t b) {
 }
 
 // Buffer functions
-// TODO: convert to ringbuffers to avoid memmove() operations.
 
 // Store data into the buffer
-static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data, size_t len) {
+ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data, size_t len) {
 	if(buf->maxsize <= buf->used)
 		return 0;
 
-	debug("buffer_put_at used:%lu offset:%lu len:%lu max:%lu\n", (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len, (unsigned long)buf->maxsize);
+	debug("buffer_put_at start:%lu used:%lu offset:%lu len:%lu size: %lu max:%lu\n", (unsigned long)buf->start, (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len, (unsigned long)buf->size, (unsigned long)buf->maxsize);
 
 	size_t required = offset + len;
+
 	if(required > buf->maxsize) {
 		if(offset >= buf->maxsize)
 			return 0;
@@ -250,48 +250,107 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 				newsize *= 2;
 			} while(newsize < required);
 		}
-		if(newsize > buf->maxsize)
+		if(newsize > buf->maxsize) {
 			newsize = buf->maxsize;
+		}
 		char *newdata = realloc(buf->data, newsize);
 		if(!newdata)
 			return -1;
 		buf->data = newdata;
+		// if data wrapped around the ring, move the applicable parts to the end of the buffer
+		if(buf->start + buf->used > buf->size) {
+			size_t available = newsize - buf->size;
+			size_t wrapped = buf->used - (buf->size - buf->start);
+			size_t move_to_end = 0;
+			size_t realign_to_begin = 0;
+			if(wrapped > available) {
+				move_to_end = available;
+				realign_to_begin = wrapped - available;
+			} else {
+				move_to_end = wrapped;
+				realign_to_begin = 0;
+			}
+			memmove(buf->data + buf->size, buf->data, move_to_end);
+			memmove(buf->data, buf->data + move_to_end, realign_to_begin);
+		}
 		buf->size = newsize;
 	}
 
-	memcpy(buf->data + offset, data, len);
+	size_t append = 0;
+	size_t append_offset = 0;
+	size_t wrap = 0;
+	size_t wrap_offset = 0;
+	if(buf->start + offset <= buf->size) {
+		append = buf->size - (buf->start + offset);
+		append_offset = offset;
+		wrap_offset = 0;
+		if(append > len)
+			append = len;
+	} else {
+		wrap_offset = offset - (buf->size - buf->start);
+	}
+	wrap = len - append;
+	memcpy(buf->data + buf->start + append_offset, data, append);
+	if(wrap) {
+		memcpy(buf->data + wrap_offset, data + append, wrap);
+	}
 	if(required > buf->used)
 		buf->used = required;
 	return len;
 }
 
-static ssize_t buffer_put(struct buffer *buf, const void *data, size_t len) {
+ssize_t buffer_put(struct buffer *buf, const void *data, size_t len) {
 	return buffer_put_at(buf, buf->used, data, len);
 }
 
 // Get data from the buffer. data can be NULL.
-static ssize_t buffer_get(struct buffer *buf, void *data, size_t len) {
+ssize_t buffer_get(struct buffer *buf, void *data, size_t len) {
 	if(len > buf->used)
 		len = buf->used;
-	if(data)
-		memcpy(data, buf->data, len);
-	if(len < buf->used)
-		memmove(buf->data, buf->data + len, buf->used - len);
+	
+	debug("buffer_get start:%lu used:%lu len:%lu size: %lu max:%lu\n", (unsigned long)buf->start, (unsigned long)buf->used, (unsigned long)len, (unsigned long)buf->size, (unsigned long)buf->maxsize);
+
+	size_t at_end = buf->size - buf->start;
+	if(data) {
+		if(len >= at_end) {
+			memcpy(data, buf->data + buf->start, at_end);
+			memcpy(data + at_end, buf->data, len - at_end);
+			buf->start = 0 + (len - at_end);
+		} else {
+			memcpy(data, buf->data + buf->start, len);
+			buf->start += len;
+		}
+	} else {
+		if(len >= at_end) {
+			buf->start = 0 + (len - at_end);
+		} else {
+			buf->start += len;
+		}
+	}
 	buf->used -= len;
 	return len;
 }
 
 // Copy data from the buffer without removing it.
-static ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t len) {
+ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t len) {
 	if(offset >= buf->used)
 		return 0;
 	if(offset + len > buf->used)
 		len = buf->used - offset;
-	memcpy(data, buf->data + offset, len);
+
+	debug("buffer_copy start:%lu used:%lu offset:%lu len:%lu size: %lu max:%lu\n", (unsigned long)buf->start, (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len, (unsigned long)buf->size, (unsigned long)buf->maxsize);
+
+	size_t at_end = buf->size - buf->start;
+	if(len >= at_end) {
+		memcpy(data, buf->data + buf->start, at_end);
+		memcpy(data + at_end, buf->data, len - at_end);
+	} else {
+		memcpy(data, buf->data + buf->start, len);
+	}
 	return len;
 }
 
-static bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen) {
+bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen) {
 	memset(buf, 0, sizeof *buf);
 	if(len) {
 		buf->data = malloc(len);
@@ -300,17 +359,20 @@ static bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen) {
 	}
 	buf->size = len;
 	buf->maxsize = maxlen;
+	buf->start = 0;
+	buf->used = 0;
 	return true;
 }
 
-static void buffer_exit(struct buffer *buf) {
+void buffer_exit(struct buffer *buf) {
 	free(buf->data);
 	memset(buf, 0, sizeof *buf);
 }
 
-static uint32_t buffer_free(const struct buffer *buf) {
+uint32_t buffer_free(const struct buffer *buf) {
 	return buf->maxsize - buf->used;
 }
+
 
 // Connections are stored in a sorted list.
 // This gives O(log(N)) lookup time, O(N log(N)) insertion time and O(N) deletion time.

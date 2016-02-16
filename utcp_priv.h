@@ -84,10 +84,19 @@ static const char *strstate[] __attribute__((unused)) = {
 
 struct buffer {
 	char *data;
+        uint32_t start;
 	uint32_t used;
 	uint32_t size;
 	uint32_t maxsize;
 };
+
+extern uint32_t buffer_free(const struct buffer *buf);
+extern ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data, size_t len);
+extern ssize_t buffer_put(struct buffer *buf, const void *data, size_t len);
+extern ssize_t buffer_get(struct buffer *buf, void *data, size_t len);
+extern ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t len);
+extern bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen);
+extern void buffer_exit(struct buffer *buf);
 
 struct sack {
 	uint32_t offset;

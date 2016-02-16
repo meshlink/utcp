@@ -4,3 +4,4 @@
 *.lo
 /test
 /selftest
+/unittest
