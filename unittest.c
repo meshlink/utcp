@@ -24,7 +24,7 @@ static char *test_buffer_free() {
 	buffer_init(&buf, 0, 10);
 	// free space should be the max size, not the currently allocated memory
 	mu_assert("buffer free space incorrect", buffer_free(&buf) == 10);
-	buffer_put(&buf,data,sizeof data);
+	buffer_put(&buf, data, sizeof data);
 	mu_assert("buffer free space incorrect after writing", buffer_free(&buf) == 6);
 	mu_assert("buffer used wrong", buf.used == 4);
 	buffer_exit(&buf);
@@ -135,6 +135,8 @@ static char *test_buffer_copy() {
 static char *test_buffer_put_at_wrap() {
 	struct buffer buf;
 	char data[8] = "12345678";
+	char actual[8];
+	memset(actual, 0, sizeof actual);
 	buffer_init(&buf, 10, 10);
 	// to get the wrap we need to write at offset 5,
 	// then consume the unused 5 bytes, then write at offset 5 again
@@ -145,30 +147,26 @@ static char *test_buffer_put_at_wrap() {
 	put = buffer_put_at(&buf, 5, data + 5, 3);
 	mu_assert("buffer wrong amount put", put == 3);
 	mu_assert("buffer free space incorrect", buffer_free(&buf) == 2);
-	mu_assert("data0 put incorrect", buf.data[5] == data[0]);
-	mu_assert("data1 put incorrect", buf.data[6] == data[1]);
-	mu_assert("data2 put incorrect", buf.data[7] == data[2]);
-	mu_assert("data3 put incorrect", buf.data[8] == data[3]);
-	mu_assert("data4 put incorrect", buf.data[9] == data[4]);
-	mu_assert("data5 put incorrect", buf.data[0] == data[5]);
-	mu_assert("data6 put incorrect", buf.data[1] == data[6]);
-	mu_assert("data7 put incorrect", buf.data[2] == data[7]);
+	buffer_copy(&buf, actual, 0, sizeof actual);
+	mu_assert("data0 put incorrect", actual[0] == data[0]);
+	mu_assert("data1 put incorrect", actual[1] == data[1]);
+	mu_assert("data2 put incorrect", actual[2] == data[2]);
+	mu_assert("data3 put incorrect", actual[3] == data[3]);
+	mu_assert("data4 put incorrect", actual[4] == data[4]);
+	mu_assert("data5 put incorrect", actual[5] == data[5]);
+	mu_assert("data6 put incorrect", actual[6] == data[6]);
+	mu_assert("data7 put incorrect", actual[7] == data[7]);
 
 	// writing past buf.start should not be allowed
 	char data2[4] = "data";
+	char actual2[2];
+	memset(actual2, 0, sizeof actual2);
 	put = buffer_put_at(&buf, 8, data2, 4);
 	mu_assert("buffer wrong amount put", put == 2);
 	mu_assert("buffer free space incorrect", buffer_free(&buf) == 0);
-	mu_assert("data0 put incorrect", buf.data[5] == data[0]);
-	mu_assert("data1 put incorrect", buf.data[6] == data[1]);
-	mu_assert("data2 put incorrect", buf.data[7] == data[2]);
-	mu_assert("data3 put incorrect", buf.data[8] == data[3]);
-	mu_assert("data4 put incorrect", buf.data[9] == data[4]);
-	mu_assert("data5 put incorrect", buf.data[0] == data[5]);
-	mu_assert("data6 put incorrect", buf.data[1] == data[6]);
-	mu_assert("data7 put incorrect", buf.data[2] == data[7]);
-	mu_assert("data20 put incorrect", buf.data[3] == data2[0]);
-	mu_assert("data21 put incorrect", buf.data[4] == data2[1]);
+	buffer_copy(&buf, actual2, 8, sizeof actual2);
+	mu_assert("data20 put incorrect", actual2[0] == data2[0]);
+	mu_assert("data21 put incorrect", actual2[1] == data2[1]);
 	buffer_exit(&buf);
 	return 0;
 }
@@ -178,7 +176,6 @@ static char *test_buffer_free_single_elem() {
 	char data[1] = "d";
 	buffer_init(&buf, 10, 10);
 	buffer_put(&buf, data, sizeof data);
-	mu_assert("buf.start wrong", buf.start == 0);
 	mu_assert("buf.used wrong", buf.used == 1);
 	mu_assert("buffer free space incorrect after writing", buffer_free(&buf) == 9);
 	buffer_exit(&buf);
@@ -201,14 +198,6 @@ static char *test_buffer_copy_wrap() {
 	mu_assert("buffer used wrong", buf.used == 8);
 	buffer_copy(&buf, actual, 0, sizeof actual);
 	mu_assert("buffer used wrong after copy", buf.used == 8);
-	mu_assert("data0 copied incorrect", buf.data[5] == actual[0]);
-	mu_assert("data1 copied incorrect", buf.data[6] == actual[1]);
-	mu_assert("data2 copied incorrect", buf.data[7] == actual[2]);
-	mu_assert("data3 copied incorrect", buf.data[8] == actual[3]);
-	mu_assert("data4 copied incorrect", buf.data[9] == actual[4]);
-	mu_assert("data5 copied incorrect", buf.data[0] == actual[5]);
-	mu_assert("data6 copied incorrect", buf.data[1] == actual[6]);
-	mu_assert("data7 copied incorrect", buf.data[2] == actual[7]);
 	mu_assert("data copied incorrect", data[0] == actual[0]);
 	mu_assert("data copied incorrect", data[1] == actual[1]);
 	mu_assert("data copied incorrect", data[2] == actual[2]);
@@ -255,6 +244,8 @@ static char *test_buffer_get_copy_wrap() {
 static char *test_buffer_put_at_wrap_resize() {
 	struct buffer buf;
 	char data[15] = "123456789abcdef";
+	char actual[15];
+	memset(actual, 0, sizeof actual);
 	buffer_init(&buf, 10, 15);
 	// to get the wrap we need to write at offset 5,
 	// then consume the unused 5 bytes, then write at offset 5 again
@@ -267,33 +258,36 @@ static char *test_buffer_put_at_wrap_resize() {
 	mu_assert("buffer wrong amount put", put == 5);
 	mu_assert("buffer was resized", buf.size == 10);
 	mu_assert("buffer free space incorrect", buffer_free(&buf) == 5);
-	mu_assert("data0 put incorrect", buf.data[5] == data[0]);
-	mu_assert("data1 put incorrect", buf.data[6] == data[1]);
-	mu_assert("data2 put incorrect", buf.data[7] == data[2]);
-	mu_assert("data3 put incorrect", buf.data[8] == data[3]);
-	mu_assert("data4 put incorrect", buf.data[9] == data[4]);
-	mu_assert("data5 put incorrect", buf.data[0] == data[5]);
-	mu_assert("data6 put incorrect", buf.data[1] == data[6]);
-	mu_assert("data7 put incorrect", buf.data[2] == data[7]);
-	mu_assert("data8 put incorrect", buf.data[3] == data[8]);
-	mu_assert("data9 put incorrect", buf.data[4] == data[9]);
+	buffer_copy(&buf, actual, 0, 10);
+	mu_assert("data0 put incorrect", actual[0] == data[0]);
+	mu_assert("data1 put incorrect", actual[1] == data[1]);
+	mu_assert("data2 put incorrect", actual[2] == data[2]);
+	mu_assert("data3 put incorrect", actual[3] == data[3]);
+	mu_assert("data4 put incorrect", actual[4] == data[4]);
+	mu_assert("data5 put incorrect", actual[5] == data[5]);
+	mu_assert("data6 put incorrect", actual[6] == data[6]);
+	mu_assert("data7 put incorrect", actual[7] == data[7]);
+	mu_assert("data8 put incorrect", actual[8] == data[8]);
+	mu_assert("data9 put incorrect", actual[9] == data[9]);
 	put = buffer_put_at(&buf, 10, data + 10, 5);
 	mu_assert("buffer was not resized", buf.size == 15);
-	mu_assert("data0 put incorrect", buf.data[5] == data[0]);
-	mu_assert("data1 put incorrect", buf.data[6] == data[1]);
-	mu_assert("data2 put incorrect", buf.data[7] == data[2]);
-	mu_assert("data3 put incorrect", buf.data[8] == data[3]);
-	mu_assert("data4 put incorrect", buf.data[9] == data[4]);
-	mu_assert("data5 put incorrect", buf.data[10] == data[5]);
-	mu_assert("data6 put incorrect", buf.data[11] == data[6]);
-	mu_assert("data7 put incorrect", buf.data[12] == data[7]);
-	mu_assert("data8 put incorrect", buf.data[13] == data[8]);
-	mu_assert("data9 put incorrect", buf.data[14] == data[9]);
-	mu_assert("data10 put incorrect", buf.data[0] == data[10]);
-	mu_assert("data11 put incorrect", buf.data[1] == data[11]);
-	mu_assert("data12 put incorrect", buf.data[2] == data[12]);
-	mu_assert("data13 put incorrect", buf.data[3] == data[13]);
-	mu_assert("data14 put incorrect", buf.data[4] == data[14]);
+	memset(actual, 0, sizeof actual);
+	buffer_copy(&buf, actual, 0, 15);
+	mu_assert("data0 put incorrect", actual[0] == data[0]);
+	mu_assert("data1 put incorrect", actual[1] == data[1]);
+	mu_assert("data2 put incorrect", actual[2] == data[2]);
+	mu_assert("data3 put incorrect", actual[3] == data[3]);
+	mu_assert("data4 put incorrect", actual[4] == data[4]);
+	mu_assert("data5 put incorrect", actual[5] == data[5]);
+	mu_assert("data6 put incorrect", actual[6] == data[6]);
+	mu_assert("data7 put incorrect", actual[7] == data[7]);
+	mu_assert("data8 put incorrect", actual[8] == data[8]);
+	mu_assert("data9 put incorrect", actual[9] == data[9]);
+	mu_assert("data10 put incorrect", actual[10] == data[10]);
+	mu_assert("data11 put incorrect", actual[11] == data[11]);
+	mu_assert("data12 put incorrect", actual[12] == data[12]);
+	mu_assert("data13 put incorrect", actual[13] == data[13]);
+	mu_assert("data14 put incorrect", actual[14] == data[14]);
 
 	buffer_exit(&buf);
 	return 0;
