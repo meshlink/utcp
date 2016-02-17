@@ -341,11 +341,15 @@ ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t len) {
 	debug("buffer_copy start:%lu used:%lu offset:%lu len:%lu size: %lu max:%lu\n", (unsigned long)buf->start, (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len, (unsigned long)buf->size, (unsigned long)buf->maxsize);
 
 	size_t at_end = buf->size - buf->start;
-	if(len >= at_end) {
-		memcpy(data, buf->data + buf->start, at_end);
-		memcpy(data + at_end, buf->data, len - at_end);
+	if(offset + len >= at_end) {
+		if(offset <= at_end) {
+			memcpy(data, buf->data + buf->start + offset, at_end - offset);
+			memcpy(data + at_end, buf->data, len - at_end - offset);
+		} else {
+			memcpy(data, buf->data + offset - at_end, len);
+		}
 	} else {
-		memcpy(data, buf->data + buf->start, len);
+		memcpy(data, buf->data + buf->start + offset, len);
 	}
 	return len;
 }

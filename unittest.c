@@ -326,6 +326,27 @@ static char *test_buffer_put_at_resize() {
 	return 0;
 }
 
+static char *test_buffer_copy_offset() {
+	struct buffer buf;
+	char data[8] = "12345678";
+	char actual[4];
+	memset(actual, 0, sizeof actual);
+	buffer_init(&buf, 10, 10);
+	// to get the wrap we need to write at offset 5,
+	// then consume the unused 5 bytes, then write at offset 5 again
+	// (think of how this would work in a non-ring buffer)
+	ssize_t put = buffer_put_at(&buf, 0, data, sizeof data);
+	mu_assert("buffer wrong amount put", put == 8);
+	mu_assert("buffer used wrong", buf.used == 8);
+	buffer_copy(&buf, actual, 1, sizeof actual);
+	mu_assert("buffer used wrong after copy", buf.used == 8);
+	mu_assert("data copied incorrect", data[1] == actual[0]);
+	mu_assert("data copied incorrect", data[2] == actual[1]);
+	mu_assert("data copied incorrect", data[3] == actual[2]);
+	buffer_exit(&buf);
+	return 0;
+}
+
 static char *all_tests() {
 	mu_run_test(test_buffer_init);
 	mu_run_test(test_buffer_free);
@@ -341,6 +362,7 @@ static char *all_tests() {
 	mu_run_test(test_buffer_get_copy_wrap);
 	mu_run_test(test_buffer_put_at_wrap_resize);
 	mu_run_test(test_buffer_put_at_resize);
+	mu_run_test(test_buffer_copy_offset);
 	return 0;
 }
 
