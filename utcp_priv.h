@@ -84,7 +84,7 @@ static const char *strstate[] __attribute__((unused)) = {
 
 struct buffer {
 	char *data;
-        uint32_t start;
+	uint32_t start;
 	uint32_t used;
 	uint32_t size;
 	uint32_t maxsize;
