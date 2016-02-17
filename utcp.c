@@ -344,7 +344,7 @@ ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t len) {
 	if(offset + len >= at_end) {
 		if(offset <= at_end) {
 			memcpy(data, buf->data + buf->start + offset, at_end - offset);
-			memcpy(data + at_end, buf->data, len - at_end - offset);
+			memcpy(data + at_end - offset, buf->data, len - at_end - offset);
 		} else {
 			memcpy(data, buf->data + offset - at_end, len);
 		}
