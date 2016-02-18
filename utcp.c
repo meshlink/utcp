@@ -847,16 +847,21 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 }
 
 static void handle_in_order(struct utcp_connection *c, const void *data, size_t len) {
+	char* frombuf = NULL;
+
 	// Check if we can process out-of-order data now.
 	if(c->sacks[0].len && len >= c->sacks[0].offset) {
 		debug("incoming packet len %lu connected with SACK at %u\n", (unsigned long)len, c->sacks[0].offset);
-		if(buffer_put_at(&c->rcvbuf, 0, data, len) != len)
+		ssize_t put = buffer_put_at(&c->rcvbuf, 0, data, len);
+		if(put != len) {
 			// log error but proceed with retrieved data
 			debug("failed to buffer packet data\n");
-		else {
+		} else {
 			for(int i = 0; i < NSACKS && c->sacks[i].len && c->sacks[i].offset <= len; i++)
 				len = max(len, c->sacks[i].offset + c->sacks[i].len);
-			data = c->rcvbuf.data;
+			frombuf = malloc(len);
+			buffer_copy(&c->rcvbuf, frombuf, 0, len);
+			data = frombuf;
 		}
 	}
 
@@ -873,6 +878,7 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 		sack_consume(c, len);
 
 	c->rcv.nxt += len;
+	free(frombuf);
 }
 
 
