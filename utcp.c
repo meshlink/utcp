@@ -859,6 +859,8 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 		} else {
 			for(int i = 0; i < NSACKS && c->sacks[i].len && c->sacks[i].offset <= len; i++)
 				len = max(len, c->sacks[i].offset + c->sacks[i].len);
+			// c->rcvbuf.data is implemented as a ring buffer so we can't
+			// hand it directly to the application
 			frombuf = malloc(len);
 			buffer_copy(&c->rcvbuf, frombuf, 0, len);
 			data = frombuf;

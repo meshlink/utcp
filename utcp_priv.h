@@ -83,7 +83,7 @@ static const char *strstate[] __attribute__((unused)) = {
 };
 
 struct buffer {
-	char *data;
+	char *data; // is implemented as a ring buffer so use buffer_copy to get data before passing to application
 	uint32_t start;
 	uint32_t used;
 	uint32_t size;
