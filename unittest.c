@@ -347,6 +347,54 @@ static char *test_buffer_copy_offset() {
 	return 0;
 }
 
+static char *test_buffer_get_wrap() {
+	struct buffer buf;
+	char data[8] = "12345678";
+	buffer_init(&buf, 10, 10);
+	// to get the wrap we need to write at offset 5,
+	// then consume the unused 5 bytes, then write at offset 5 again
+	// (think of how this would work in a non-ring buffer)
+	ssize_t put = buffer_put_at(&buf, 5, data, 5);
+	mu_assert("buffer wrong amount put", put == 5);
+	mu_assert("buffer.used wrong", buf.used == 10);
+	buffer_get(&buf, NULL, 5);
+	put = buffer_put_at(&buf, 5, data + 5, 3);
+	mu_assert("buffer used wrong", buf.used == 8);
+	buffer_get(&buf, NULL, 8);
+	// get() should consume the data
+	mu_assert("buffer used wrong after get", buf.used == 0);
+	buffer_exit(&buf);
+	return 0;
+}
+
+// data is wrapped in buffer and offset is larger than the data at the end
+static char *test_buffer_copy_wrap_huge_offset() {
+	struct buffer buf;
+	char data[15] = "123456789abcdef";
+	char actual[15];
+	memset(actual, 0, sizeof actual);
+	buffer_init(&buf, 20, 20);
+	// to get the wrap we need to write at offset 5,
+	// then consume the unused 5 bytes, then write at offset 5 again
+	// (think of how this would work in a non-ring buffer)
+	ssize_t put = buffer_put_at(&buf, 15, data, 5);
+	mu_assert("buffer wrong amount put", put == 5);
+	mu_assert("buffer.used wrong", buf.used == 20);
+	buffer_get(&buf, NULL, 15);
+	put = buffer_put_at(&buf, 5, data + 5, 10);
+	mu_assert("buffer used wrong", buf.used == 15);
+	buffer_copy(&buf, actual, 10, sizeof actual);
+	mu_assert("buffer used wrong after copy", buf.used == 15);
+	mu_assert("data copied incorrect", data[10] == actual[0]);
+	mu_assert("data copied incorrect", data[11] == actual[1]);
+	mu_assert("data copied incorrect", data[12] == actual[2]);
+	mu_assert("data copied incorrect", data[13] == actual[3]);
+	mu_assert("data copied incorrect", data[14] == actual[4]);
+	mu_assert("data copied incorrect", data[15] == actual[5]);
+	buffer_exit(&buf);
+	return 0;
+}
+
 static char *all_tests() {
 	mu_run_test(test_buffer_init);
 	mu_run_test(test_buffer_free);
@@ -363,6 +411,8 @@ static char *all_tests() {
 	mu_run_test(test_buffer_put_at_wrap_resize);
 	mu_run_test(test_buffer_put_at_resize);
 	mu_run_test(test_buffer_copy_offset);
+	mu_run_test(test_buffer_get_wrap);
+	mu_run_test(test_buffer_copy_wrap_huge_offset);
 	return 0;
 }
 
