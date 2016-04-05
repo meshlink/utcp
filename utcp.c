@@ -806,7 +806,7 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 		return;
 	}
 
-	// Packet loss or reordering occured. Store the data in the buffer.
+	// Packet loss or reordering occurred. Store the data in the buffer.
 	ssize_t rxd = buffer_put_at(&c->rcvbuf, offset, data, len);
 
 	// Make note of where we put it.
@@ -1083,8 +1083,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			int32_t bufused = seqdiff(c->snd.last, c->snd.una);
 			assert(data_acked <= bufused);
 
-			if(data_acked)
+			if(data_acked) {
 				buffer_get(&c->sndbuf, NULL, data_acked);
+				if(c->ack)
+					c->ack(c, data_acked);
+			}
 
 			// Also advance snd.nxt if possible
 			if(seqdiff(c->snd.nxt, hdr.ack) < 0)
@@ -1747,6 +1750,11 @@ void utcp_set_recv_cb(struct utcp_connection *c, utcp_recv_t recv) {
 void utcp_set_poll_cb(struct utcp_connection *c, utcp_poll_t poll) {
 	if(c)
 		c->poll = poll;
+}
+
+void utcp_set_ack_cb(struct utcp_connection *c, utcp_ack_t ack) {
+	if(c)
+		c->ack = ack;
 }
 
 void utcp_set_accept_cb(struct utcp *utcp, utcp_accept_t accept, utcp_pre_accept_t pre_accept) {

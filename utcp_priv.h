@@ -113,6 +113,7 @@ struct utcp_connection {
 
 	utcp_recv_t recv;
 	utcp_poll_t poll;
+        utcp_ack_t ack;
 
 	// TCP State
 
