@@ -157,6 +157,7 @@ struct utcp_connection {
 
 	bool nodelay;
 	bool keepalive;
+        uint32_t cwnd_max;
 
 	// Congestion avoidance state
 

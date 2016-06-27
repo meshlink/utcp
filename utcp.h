@@ -95,4 +95,17 @@ extern void utcp_set_keepalive(struct utcp_connection *connection, bool keepaliv
 
 extern size_t utcp_get_outq(struct utcp_connection *connection);
 
+/** Set connection maximum congestion window size.
+ * Set to 0 for no maximum.
+ * Must be at least as large as mtu.
+ * Returns true if limit was set successfully, false otherwise.
+ */
+extern bool utcp_set_cwnd_max(struct utcp_connection *conection, uint32_t max);
+
+/** Get connection maximum congestion window size.
+ * Returns true on success, false on error.
+ * Sets `max` to current limit, or 0 if no limit is set.
+ */
+extern bool utcp_get_cwnd_max(struct utcp_connection *connection, uint32_t *max);
+
 #endif
