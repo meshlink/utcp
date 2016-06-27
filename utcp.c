@@ -484,6 +484,7 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	c->snd.last = c->snd.nxt;
 	c->snd.cwnd = utcp->mtu;
 	c->snd.ssthresh = 1 << 30;
+	c->cwnd_max = 0;
 	c->utcp = utcp;
 
 	// Add it to the sorted list of connections
@@ -721,6 +722,8 @@ static void retransmit(struct utcp_connection *c) {
 			c->snd.nxt = c->snd.una + len;
 			c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
 			c->snd.cwnd = utcp->mtu; // reduce cwnd on retransmit
+			if( c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max )
+				c->snd.cwnd = c->cwnd_max;
 			buffer_copy(&c->sndbuf, pkt->data, 0, len);
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
 			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
@@ -1108,6 +1111,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			if(c->snd.cwnd > c->sndbuf.maxsize)
 				c->snd.cwnd = c->sndbuf.maxsize;
 
+			// limit to cwnd_max
+			if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
+				c->snd.cwnd = c->cwnd_max;
+
 			// Check if we have sent a FIN that is now ACKed.
 			switch(c->state) {
 			case FIN_WAIT_1:
@@ -1131,6 +1138,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 					// Fast recovery
 					c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
 					c->snd.cwnd = c->snd.ssthresh;
+					if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
+						c->snd.cwnd = c->cwnd_max;
 				}
 			}
 		}
@@ -1762,4 +1771,21 @@ void utcp_set_accept_cb(struct utcp *utcp, utcp_accept_t accept, utcp_pre_accept
 		utcp->accept = accept;
 		utcp->pre_accept = pre_accept;
 	}
+}
+
+bool utcp_set_cwnd_max(struct utcp_connection *connection, uint32_t max) {
+	if(!connection || (max != 0 && max < connection->utcp->mtu)) {
+		return false;
+	}
+	connection->cwnd_max = max;
+	return true;
+}
+
+bool utcp_get_cwnd_max(struct utcp_connection *connection, uint32_t *max) {
+	if(connection) {
+		*max = connection->cwnd_max;
+		return true;
+	}
+	*max = 0;
+	return false;
 }
