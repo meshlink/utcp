@@ -42,7 +42,7 @@
 #define DEFAULT_USER_TIMEOUT 60 // sec
 #define CLOCK_GRANULARITY 1000 // usec
 #define START_RTO 1000000 // usec
-#define MAX_RTO 3000000 // usec
+#define MAX_RTO  60000000 // usec
 
 struct hdr {
 	uint16_t src; // Source port
