@@ -663,6 +663,7 @@ static void retransmit(struct utcp_connection *c) {
 		stop_retransmit_timer(c);
 		return;
 	}
+	debug("retransmit() called\n.");
 
 	struct utcp *utcp = c->utcp;
 
@@ -725,6 +726,7 @@ static void retransmit(struct utcp_connection *c) {
 			if( c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max )
 				c->snd.cwnd = c->cwnd_max;
 			buffer_copy(&c->sndbuf, pkt->data, 0, len);
+			debug("retransmitting unacked data: %lu\n.", (unsigned long)(sizeof pkt->hdr + len));
 			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
 			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
 			break;
