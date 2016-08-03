@@ -542,7 +542,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
 	// limit by congestion window increased by utcp->mtu on each advance
 	int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
-	debug("cwndleft = %d\n", cwndleft);
+	debug("cwndleft = %d (of %d)\n", cwndleft, c->snd.cwnd);
 
 	if(cwndleft <= 0)
 		cwndleft = 0;
