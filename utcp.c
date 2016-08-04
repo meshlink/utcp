@@ -643,6 +643,14 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	}
 
 	c->snd.last += len;
+
+	// Bail out early if we are trying to send a small packet,
+	// and if we have more than one MTU of unacknowledged data.
+	// This will delay sending the data until an ACK is received,
+	// and allows data from multiple calls to utcp_send() to be coalesced.
+	if(len < c->utcp->mtu && seqdiff(c->snd.last, c->snd.una) >= c->utcp->mtu)
+		return len;
+
 	ack(c, false);
 	if(!timerisset(&c->rtrx_timeout))
 		start_retransmit_timer(c);
