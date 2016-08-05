@@ -549,8 +549,16 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 	if(cwndleft < left)
 		left = cwndleft;
 
-	if(!left && !sendatleastone)
-		return;
+	// If we don't need to send an ACK...
+	if(!sendatleastone) {
+		// then don't if we don't have any new data,
+		if(!left)
+			return;
+
+		// and avoid sending small packets.
+		if(left < c->utcp->mtu && seqdiff(c->snd.last, c->snd.una) >= c->utcp->mtu)
+			return;
+	}
 
 	struct {
 		struct hdr hdr;
@@ -643,13 +651,6 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	}
 
 	c->snd.last += len;
-
-	// Bail out early if we are trying to send a small packet,
-	// and if we have more than one MTU of unacknowledged data.
-	// This will delay sending the data until an ACK is received,
-	// and allows data from multiple calls to utcp_send() to be coalesced.
-	if(len < c->utcp->mtu && seqdiff(c->snd.last, c->snd.una) >= c->utcp->mtu)
-		return len;
 
 	ack(c, false);
 	if(!timerisset(&c->rtrx_timeout))
