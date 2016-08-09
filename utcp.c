@@ -184,7 +184,7 @@ static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
 	} else {
 		utcp->rttvar = (utcp->rttvar * 3 + abs(utcp->srtt - rtt)) / 4;
 		utcp->srtt = (utcp->srtt * 7 + rtt) / 8;
-		utcp->rto = utcp->srtt + max(utcp->rttvar, CLOCK_GRANULARITY);
+		utcp->rto = utcp->srtt + max(4 * utcp->rttvar, CLOCK_GRANULARITY);
 	}
 
 	if(utcp->rto > MAX_RTO)
@@ -757,7 +757,7 @@ static void retransmit(struct utcp_connection *c) {
 	if(utcp->rto > MAX_RTO)
 		utcp->rto = MAX_RTO;
 	c->rtt_start.tv_sec = 0; // invalidate RTT timer
-	
+
 	start_retransmit_timer(c);
 
 cleanup:
