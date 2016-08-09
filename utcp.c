@@ -753,11 +753,12 @@ static void retransmit(struct utcp_connection *c) {
 			goto cleanup;
 	}
 
-	start_retransmit_timer(c);
 	utcp->rto *= 2;
 	if(utcp->rto > MAX_RTO)
 		utcp->rto = MAX_RTO;
 	c->rtt_start.tv_sec = 0; // invalidate RTT timer
+	
+	start_retransmit_timer(c);
 
 cleanup:
 	free(pkt);
