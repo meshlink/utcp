@@ -1803,7 +1803,7 @@ bool utcp_get_cwnd_max(struct utcp_connection *connection, uint32_t *max) {
     return false;
 }
 
-bool utcp_set_rtrx_tolerance(struct utcp_connection *conection, uint32_t tolerance) {
+bool utcp_set_rtrx_tolerance(struct utcp_connection *connection, uint32_t tolerance) {
     if(!connection) {
         return false;
     }
