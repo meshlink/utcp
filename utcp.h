@@ -115,7 +115,7 @@ extern bool utcp_set_rtrx_tolerance(struct utcp_connection *conection, uint32_t 
 
 /** Get additional connection retransmit tolerance in usec.
  * Returns true on success, false on error.
- * Sets `max` to retransmit tolerance, or 0 if no value is set.
+ * Sets `tolerance` to retransmit tolerance, or 0 if no value is set.
  */
 extern bool utcp_get_rtrx_tolerance(struct utcp_connection *connection, uint32_t *tolerance);
 
