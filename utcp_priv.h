@@ -145,6 +145,7 @@ struct utcp_connection {
     struct timeval conn_timeout;
     struct timeval rtrx_timeout;
     struct timeval rtt_start;
+    uint32_t rtrx_tolerance; // usec
     uint32_t rtt_seq;
 
     // Buffers

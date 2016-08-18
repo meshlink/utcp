@@ -155,7 +155,7 @@ static void stop_connection_timer(struct utcp_connection *c) {
 
 static void start_retransmit_timer(struct utcp_connection *c) {
 	gettimeofday(&c->rtrx_timeout, NULL);
-	c->rtrx_timeout.tv_usec += c->utcp->rto;
+	c->rtrx_timeout.tv_usec += c->utcp->rto + c->rtrx_tolerance;
 	while(c->rtrx_timeout.tv_usec >= USEC_PER_SEC) {
 		c->rtrx_timeout.tv_usec -= USEC_PER_SEC;
 		c->rtrx_timeout.tv_sec++;
@@ -485,6 +485,7 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	c->snd.cwnd = utcp->mtu;
 	c->snd.ssthresh = 1 << 30;
 	c->cwnd_max = 0;
+	c->rtrx_tolerance = 0;
 	c->utcp = utcp;
 
 	// Add it to the sorted list of connections
@@ -1799,5 +1800,22 @@ bool utcp_get_cwnd_max(struct utcp_connection *connection, uint32_t *max) {
 		return true;
 	}
 	*max = 0;
+	return false;
+}
+
+bool utcp_set_rtrx_tolerance(struct utcp_connection *conection, uint32_t tolerance) {
+	if(!connection) {
+		return false;
+	}
+	connection->rtrx_tolerance = tolerance;
+	return true;
+}
+
+bool utcp_get_rtrx_tolerance(struct utcp_connection *connection, uint32_t *tolerance) {
+	if(connection) {
+		*tolerance = connection->rtrx_tolerance;
+		return true;
+	}
+	*tolerance = 0;
 	return false;
 }
