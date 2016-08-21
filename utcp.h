@@ -108,4 +108,15 @@ extern bool utcp_set_cwnd_max(struct utcp_connection *conection, uint32_t max);
  */
 extern bool utcp_get_cwnd_max(struct utcp_connection *connection, uint32_t *max);
 
+/** Set additional connection retransmit tolerance in usec to adapt for bad connections.
+ * Returns true on success, false on error.
+ */
+extern bool utcp_set_rtrx_tolerance(struct utcp_connection *conection, uint32_t tolerance);
+
+/** Get additional connection retransmit tolerance in usec.
+ * Returns true on success, false on error.
+ * Sets `tolerance` to retransmit tolerance, or 0 if no value is set.
+ */
+extern bool utcp_get_rtrx_tolerance(struct utcp_connection *connection, uint32_t *tolerance);
+
 #endif

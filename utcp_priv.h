@@ -45,49 +45,49 @@
 #define MAX_RTO  60000000 // usec
 
 struct hdr {
-	uint16_t src; // Source port
-	uint16_t dst; // Destination port
-	uint32_t seq; // Sequence number
-	uint32_t ack; // Acknowledgement number
-	uint32_t wnd; // Window size
-	uint16_t ctl; // Flags (SYN, ACK, FIN, RST)
-	uint16_t aux; // other stuff
+    uint16_t src; // Source port
+    uint16_t dst; // Destination port
+    uint32_t seq; // Sequence number
+    uint32_t ack; // Acknowledgement number
+    uint32_t wnd; // Window size
+    uint16_t ctl; // Flags (SYN, ACK, FIN, RST)
+    uint16_t aux; // other stuff
 };
 
 enum state {
-	CLOSED,
-	LISTEN,
-	SYN_SENT,
-	SYN_RECEIVED,
-	ESTABLISHED,
-	FIN_WAIT_1,
-	FIN_WAIT_2,
-	CLOSE_WAIT,
-	CLOSING,
-	LAST_ACK,
-	TIME_WAIT
+    CLOSED,
+    LISTEN,
+    SYN_SENT,
+    SYN_RECEIVED,
+    ESTABLISHED,
+    FIN_WAIT_1,
+    FIN_WAIT_2,
+    CLOSE_WAIT,
+    CLOSING,
+    LAST_ACK,
+    TIME_WAIT
 };
 
 static const char *strstate[] __attribute__((unused)) = {
-	[CLOSED] = "CLOSED",
-	[LISTEN] = "LISTEN",
-	[SYN_SENT] = "SYN_SENT",
-	[SYN_RECEIVED] = "SYN_RECEIVED",
-	[ESTABLISHED] = "ESTABLISHED",
-	[FIN_WAIT_1] = "FIN_WAIT_1",
-	[FIN_WAIT_2] = "FIN_WAIT_2",
-	[CLOSE_WAIT] = "CLOSE_WAIT",
-	[CLOSING] = "CLOSING",
-	[LAST_ACK] = "LAST_ACK",
-	[TIME_WAIT] = "TIME_WAIT"
+    [CLOSED] = "CLOSED",
+    [LISTEN] = "LISTEN",
+    [SYN_SENT] = "SYN_SENT",
+    [SYN_RECEIVED] = "SYN_RECEIVED",
+    [ESTABLISHED] = "ESTABLISHED",
+    [FIN_WAIT_1] = "FIN_WAIT_1",
+    [FIN_WAIT_2] = "FIN_WAIT_2",
+    [CLOSE_WAIT] = "CLOSE_WAIT",
+    [CLOSING] = "CLOSING",
+    [LAST_ACK] = "LAST_ACK",
+    [TIME_WAIT] = "TIME_WAIT"
 };
 
 struct buffer {
-	char *data; // is implemented as a ring buffer so use buffer_copy to get data before passing to application
-	uint32_t start;
-	uint32_t used;
-	uint32_t size;
-	uint32_t maxsize;
+    char *data; // is implemented as a ring buffer so use buffer_copy to get data before passing to application
+    uint32_t start;
+    uint32_t used;
+    uint32_t size;
+    uint32_t maxsize;
 };
 
 extern uint32_t buffer_free(const struct buffer *buf);
@@ -99,97 +99,98 @@ extern bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen);
 extern void buffer_exit(struct buffer *buf);
 
 struct sack {
-	uint32_t offset;
-	uint32_t len;
+    uint32_t offset;
+    uint32_t len;
 };
 
 struct utcp_connection {
-	void *priv;
-	struct utcp *utcp;
+    void *priv;
+    struct utcp *utcp;
 
-	bool reapable;
+    bool reapable;
 
-	// Callbacks
+    // Callbacks
 
-	utcp_recv_t recv;
-	utcp_poll_t poll;
+    utcp_recv_t recv;
+    utcp_poll_t poll;
         utcp_ack_t ack;
 
-	// TCP State
+    // TCP State
 
-	uint16_t src;
-	uint16_t dst;
-	enum state state;
+    uint16_t src;
+    uint16_t dst;
+    enum state state;
 
-	struct {
-		uint32_t una;
-		uint32_t nxt;
-		uint32_t wnd;
-		uint32_t iss;
+    struct {
+        uint32_t una;
+        uint32_t nxt;
+        uint32_t wnd;
+        uint32_t iss;
 
-		uint32_t last;
-		uint32_t cwnd;
-		uint32_t ssthresh;
-	} snd;
+        uint32_t last;
+        uint32_t cwnd;
+        uint32_t ssthresh;
+    } snd;
 
-	struct {
-		uint32_t nxt;
-		uint32_t wnd;
-		uint32_t irs;
-	} rcv;
+    struct {
+        uint32_t nxt;
+        uint32_t wnd;
+        uint32_t irs;
+    } rcv;
 
-	int dupack;
+    int dupack;
 
-	// Timers
+    // Timers
 
-	struct timeval conn_timeout;
-	struct timeval rtrx_timeout;
-	struct timeval rtt_start;
-	uint32_t rtt_seq;
+    struct timeval conn_timeout;
+    struct timeval rtrx_timeout;
+    struct timeval rtt_start;
+    uint32_t rtrx_tolerance; // usec
+    uint32_t rtt_seq;
 
-	// Buffers
+    // Buffers
 
-	struct buffer sndbuf;
-	struct buffer rcvbuf;
-	struct sack sacks[NSACKS];
+    struct buffer sndbuf;
+    struct buffer rcvbuf;
+    struct sack sacks[NSACKS];
 
-	// Per-socket options
+    // Per-socket options
 
-	bool nodelay;
-	bool keepalive;
-        uint32_t cwnd_max;
+    bool nodelay;
+    bool keepalive;
+    uint32_t cwnd_max;
 
-	// Congestion avoidance state
+    // Congestion avoidance state
 
-	struct timeval tlast;
-	uint64_t bandwidth;
+    struct timeval tlast;
+    uint64_t bandwidth;
 };
 
 struct utcp {
-	void *priv;
+    void *priv;
 
-	// Callbacks
+    // Callbacks
 
-	utcp_accept_t accept;
-	utcp_pre_accept_t pre_accept;
-	utcp_send_t send;
+    utcp_accept_t accept;
+    utcp_pre_accept_t pre_accept;
+    utcp_send_t send;
 
-	// Global socket options
+    // Global socket options
 
-	uint16_t mtu;
-	int timeout; // sec
+    uint16_t mtu;
+    int timeout; // sec
 
-	// RTT variables
+    // RTT variables
 
-	uint32_t srtt; // usec
-	uint32_t rttvar; // usec
-	uint32_t rto; // usec
+    uint32_t srtt; // usec
+    uint32_t rttvar; // usec
+    uint32_t rto; // usec
 
-	// Connection management
+    // Connection management
 
-	struct utcp_connection **connections;
-	int nconnections;
-	int nallocated;
+    struct utcp_connection **connections;
+    int nconnections;
+    int nallocated;
 };
 
 #endif
