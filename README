@@ -203,9 +203,12 @@ RECEIVE PACKET
     - increase cwnd
   d no advance? NewReno
 4 If snd.una == snd.nxt, clear rtrx and conn timer
-5 Process state changes due to SYN
-6 Send new data to application
-7 Process state changes due to FIN
+5 Process state changes
+  a SYN state changes
+  b new data state changes
+  c FIN state changes
+6 Ack accepted packets
+7 Send new data to application
 
 CONGESTION AVOIDANCE
 --------------------

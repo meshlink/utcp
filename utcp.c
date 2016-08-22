@@ -1294,7 +1294,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // 5. Process SYN stuff
+    // 5. Process state changes
+
+    // 5a. SYN state changes
 
     if(hdr.ctl & SYN) {
         switch(c->state) {
@@ -1330,7 +1332,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         c->rcv.nxt++;
     }
 
-    // 6. Process new data
+    // 5b. new data state changes
 
     if(c->state == SYN_RECEIVED) {
         // This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
@@ -1348,6 +1350,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
+    bool handle_incoming = false;
     if(datalen) {
         switch(c->state) {
         case SYN_SENT:
@@ -1376,11 +1379,14 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             return 0;
         }
 
-        handle_incoming_data(c, hdr.seq, data, datalen);
+        // delay to process the new data received till after the ack
+        // for quicker response time and a decreased rtt measurement variance
+        handle_incoming = true;
     }
 
-    // 7. Process FIN stuff
+    // 5c. FIN state changes
 
+    bool closed = false;
     if((hdr.ctl & FIN) && hdr.seq + len == c->rcv.nxt) {
         switch(c->state) {
         case SYN_SENT:
@@ -1418,20 +1424,34 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         c->rcv.nxt++;
         len++;
 
-        // Inform the application that the peer closed the connection.
-        if(c->recv) {
-            errno = 0;
-            c->recv(c, NULL, 0);
-        }
+        closed = true;
     }
+
+    // 6. Ack accepted packets
 
     // Now we send something back if:
     // - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
     //   -> sendatleastone = true
     // - or we got an ack, so we should maybe send a bit more data
     //   -> sendatleastone = false
-
     ack(c, len || prevrcvnxt != c->rcv.nxt);
+
+    // 7. Send new data to application
+    // Given the ack is used for roundtrip measurement and a too high response time or variation
+    // easily implicts retransmits, delay all compution intensive processing till after the ack.
+
+    // Handle new incoming data.
+    if(handle_incoming)
+    {
+        handle_incoming_data(c, hdr.seq, data, datalen);
+    }
+
+    // Inform the application when the peer closed the connection.
+    if(closed && c->recv) {
+        errno = 0;
+        c->recv(c, NULL, 0);
+    }
+
     return 0;
 
 reset:
