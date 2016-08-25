@@ -1715,8 +1715,8 @@ uint16_t utcp_update_mtu(struct utcp *utcp, uint16_t mtu) {
     if(utcp)
     {
         // handle overhead of the header
-        utcp->mtu = mtu > sizeof(hdr)? mtu - sizeof(hdr): DEFAULT_MTU;
-        return uctp->mtu;
+        utcp->mtu = mtu > sizeof(struct hdr)? mtu - sizeof(struct hdr): DEFAULT_MTU;
+        return utcp->mtu;
     }
     return 0;
 }
