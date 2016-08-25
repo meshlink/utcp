@@ -1706,9 +1706,19 @@ uint16_t utcp_get_mtu(struct utcp *utcp) {
 }
 
 void utcp_set_mtu(struct utcp *utcp, uint16_t mtu) {
-    // TODO: handle overhead of the header
+    // directly set the mtu so utcp_get_mtu matches the value specified
     if(utcp)
         utcp->mtu = mtu;
+}
+
+uint16_t utcp_update_mtu(struct utcp *utcp, uint16_t mtu) {
+    if(utcp)
+    {
+        // handle overhead of the header
+        utcp->mtu = mtu > sizeof(struct hdr)? mtu - sizeof(struct hdr): DEFAULT_MTU;
+        return utcp->mtu;
+    }
+    return 0;
 }
 
 int utcp_get_user_timeout(struct utcp *u) {
