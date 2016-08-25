@@ -75,8 +75,9 @@ extern int utcp_get_user_timeout(struct utcp *utcp);
 extern void utcp_set_user_timeout(struct utcp *utcp, int seconds);
 
 extern uint16_t utcp_get_mtu(struct utcp *utcp);
+// Set mtu to exactly the given value
 extern void utcp_set_mtu(struct utcp *utcp, uint16_t mtu);
-// update mtu with automatic utcp header value adjustion
+// Set the mtu to the given value, minus the size of the utcp header. Returns the effective remaining mtu.
 extern uint16_t utcp_update_mtu(struct utcp *utcp, uint16_t mtu);
 
 // Per-socket options
