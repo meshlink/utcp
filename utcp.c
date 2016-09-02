@@ -1115,10 +1115,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             int32_t bufused = seqdiff(c->snd.last, c->snd.una);
             assert(data_acked <= bufused);
 
+            // Remove data from send buffer
             if(data_acked) {
                 buffer_get(&c->sndbuf, NULL, data_acked);
-                if(c->ack)
-                    c->ack(c, data_acked);
             }
 
             // Also advance snd.nxt if possible
@@ -1161,6 +1160,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             default:
                 break;
             }
+
+            // Call ack callback if set
+            if(data_acked && c->ack)
+                c->ack(c, data_acked);
         } else {
             if(!progress && !len) {
                 c->dupack++;
