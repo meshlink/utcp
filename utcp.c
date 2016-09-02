@@ -107,7 +107,9 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
     }
 
     memcpy(&hdr, pkt, sizeof hdr);
-    fprintf (stderr, "%p %s: len=" PRINT_SIZE_T ", src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
+    fprintf (stderr, "%p %s: len=" PRINT_SIZE_T ", src=%u dst=%u seq=%u ack=%u trs=%u tra=%u wnd=%u ctl=",
+        utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.trs, hdr.tra, hdr.wnd);
+
     if(hdr.ctl & SYN)
         debug("SYN");
     if(hdr.ctl & RST)
