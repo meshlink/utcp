@@ -510,6 +510,8 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
     hdr.dst = c->dst;
     hdr.seq = c->snd.iss;
     hdr.ack = 0;
+    hdr.trs = 0;
+    hdr.tra = 0;
     hdr.wnd = c->rcv.wnd;
     hdr.ctl = SYN;
     hdr.aux = 0;
@@ -573,6 +575,8 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
     pkt->hdr.src = c->src;
     pkt->hdr.dst = c->dst;
     pkt->hdr.ack = c->rcv.nxt;
+    pkt->hdr.trs = c->snd.trs;
+    pkt->hdr.tra = c->rcv.trs;
     pkt->hdr.wnd = c->rcv.wnd;
     pkt->hdr.ctl = ACK;
     pkt->hdr.aux = 0;
@@ -688,6 +692,8 @@ static void retransmit(struct utcp_connection *c) {
 
     pkt->hdr.src = c->src;
     pkt->hdr.dst = c->dst;
+    pkt->hdr.trs = ++c->snd.trs;
+    pkt->hdr.tra = c->rcv.trs;
     pkt->hdr.wnd = c->rcv.wnd;
     pkt->hdr.aux = 0;
 
@@ -979,12 +985,15 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             c->snd.wnd = hdr.wnd;
             c->rcv.irs = hdr.seq;
             c->rcv.nxt = c->rcv.irs + 1;
+            c->rcv.trs = hdr.trs;
             set_state(c, SYN_RECEIVED);
 
-            hdr.dst = c->dst;
             hdr.src = c->src;
-            hdr.ack = c->rcv.irs + 1;
+            hdr.dst = c->dst;
             hdr.seq = c->snd.iss;
+            hdr.ack = c->rcv.irs + 1;
+            hdr.trs = c->snd.trs;
+            hdr.tra = c->rcv.trs;
             hdr.ctl = SYN | ACK;
             print_packet(c->utcp, "send", &hdr, sizeof hdr);
             utcp->send(utcp, &hdr, sizeof hdr);
@@ -1046,7 +1055,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         goto reset;
     }
 
-    c->snd.wnd = hdr.wnd; // TODO: move below
+
+    c->rcv.trs = hdr.trs;
+
+    c->snd.wnd = hdr.wnd;
 
     // 2. Advance snd.una and update retransmit timer
     // process acks even when hdr.seq doesn't match to adapt early and
@@ -1456,6 +1468,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 reset:
     swap_ports(&hdr);
+    hdr.trs = c->snd.trs;
+    hdr.tra = c->rcv.trs;
     hdr.wnd = 0;
     if(hdr.ctl & ACK) {
         hdr.seq = hdr.ack;
@@ -1589,6 +1603,8 @@ int utcp_abort(struct utcp_connection *c) {
     hdr.dst = c->dst;
     hdr.seq = c->snd.nxt;
     hdr.ack = 0;
+    hdr.trs = c->snd.trs;
+    hdr.tra = c->rcv.trs;
     hdr.wnd = 0;
     hdr.ctl = RST;
 

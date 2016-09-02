@@ -47,8 +47,10 @@
 struct hdr {
     uint16_t src; // Source port
     uint16_t dst; // Destination port
-    uint32_t seq; // Sequence number
-    uint32_t ack; // Acknowledgement number
+    uint32_t seq; // Sequence number sent
+    uint32_t ack; // Sequence number acknowledged
+    uint16_t trs; // Transmit number sent
+    uint16_t tra; // Transmit number acknowledged
     uint32_t wnd; // Window size
     uint16_t ctl; // Flags (SYN, ACK, FIN, RST)
     uint16_t aux; // other stuff
@@ -122,8 +124,9 @@ struct utcp_connection {
     enum state state;
 
     struct {
-        uint32_t una;
-        uint32_t nxt;
+        uint32_t una; // unacknowledged sequence number sent
+        uint32_t nxt; // next sequence number to send
+        uint16_t trs; // transmit number to send
         uint32_t wnd;
         uint32_t iss;
 
@@ -133,7 +136,8 @@ struct utcp_connection {
     } snd;
 
     struct {
-        uint32_t nxt;
+        uint32_t nxt; // next sequence number to receive
+        uint16_t trs; // transmit number received
         uint32_t wnd;
         uint32_t irs;
     } rcv;
