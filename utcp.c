@@ -1020,9 +1020,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // It is for an existing connection.
 
-    // 1. Drop invalid packets.
+    // 1. Check packet validity
 
-    // 1a. Drop packets that should not happen in our current state.
+    // 1a. Drop packets with invalid flags or state
 
     switch(c->state) {
     case SYN_SENT:
@@ -1043,7 +1043,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         break;
     }
 
-    // 1b. Drop packets with an invalid ACK.
+    // 1b. Drop packets with invalid ACK sequence number
     // ackno should never be bigger than snd.last.
     // But it might be bigger than snd.nxt since we reset snd.nxt in retransmit and on triplicate ack.
     // And by package reordering it might be lower than snd.una, still it might have some useful data.
@@ -1057,12 +1057,17 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         goto reset;
     }
 
+    // 2. Advance remote connectio state
+
+    // 2a. Update received transmit number
 
     c->rcv.trs = hdr.trs;
 
+    // 2b. Update send window
+
     c->snd.wnd = hdr.wnd;
 
-    // 2. Advance snd.una and update retransmit timer
+    // 2c. Advance acknowledged progress
     // process acks even when hdr.seq doesn't match to adapt early and
     // get triplicate ack check work even when on both ends packets are not acceptable
 
@@ -1192,7 +1197,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // 3. Check incoming data for acceptable seqno and update connection timer
+    // 3. Check for acceptable incoming data
+
+    // 3a. Check packet acceptance
 
     size_t datalen = len;
     bool acceptable = false;
@@ -1226,7 +1233,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // Update connection timer
+    // 3b. Reset connection timer
     // whenever we advance or get an acceptable packet, deem the connection active
 
     if(advanced || acceptable) {
@@ -1249,7 +1256,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // Drop unacceptable packets
+    // 3c. Drop unacceptable packets
     // seqno rolls back on retransmit, so possibly a previous ack got dropped
 
     if(!acceptable) {
@@ -1263,7 +1270,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         return 0;
     }
 
-    // 4. Handle RST packets
+    // 4. Process state changes
+
+    // 4a. RST state changes
 
     if(hdr.ctl & RST) {
         switch(c->state) {
@@ -1317,9 +1326,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // 5. Process state changes
-
-    // 5a. SYN state changes
+    // 4b. SYN state changes
 
     if(hdr.ctl & SYN) {
         switch(c->state) {
@@ -1355,7 +1362,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         c->rcv.nxt++;
     }
 
-    // 5b. new data state changes
+    // 4c. new data state changes
 
     if(c->state == SYN_RECEIVED) {
         // This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
@@ -1407,7 +1414,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         handle_incoming = true;
     }
 
-    // 5c. FIN state changes
+    // 4d. FIN state changes
 
     bool closed = false;
     if((hdr.ctl & FIN) && hdr.seq + len == c->rcv.nxt) {
@@ -1450,7 +1457,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         closed = true;
     }
 
-    // 6. Ack accepted packets
+    // 5. Ack accepted packets
 
     // Now we send something back if:
     // - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
@@ -1459,7 +1466,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     //   -> sendatleastone = false
     ack(c, len || prevrcvnxt != c->rcv.nxt);
 
-    // 7. Send new data to application
+    // 6. Send new data to application
     // Given the ack is used for roundtrip measurement and a too high response time or variation
     // easily implicts retransmits, delay all compution intensive processing till after the ack.
 
