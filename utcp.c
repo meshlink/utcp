@@ -1120,10 +1120,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                 buffer_get(&c->sndbuf, NULL, data_acked);
             }
 
-            // Also advance snd.nxt if possible
+            // Advance snd.una & snd.nxt
             if(seqdiff(c->snd.nxt, hdr.ack) < 0)
                 c->snd.nxt = hdr.ack;
-
             c->snd.una = hdr.ack;
             c->dupack = 0;
 
@@ -1165,6 +1164,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             if(data_acked && c->ack)
                 c->ack(c, data_acked);
         } else {
+            // Handle triplicate ack
             if(!progress && !len) {
                 c->dupack++;
                 if(c->dupack == 3) {
@@ -1180,7 +1180,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             }
         }
 
-        // Update retransmit timer
+        // Reset retransmit timer
 
         // reset on progress, so data can be continously sent over the channel
         // reset on empty response packets, to allow the sender to catch up on queued incoming unacceptable packets
