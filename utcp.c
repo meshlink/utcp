@@ -1076,7 +1076,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
         if(advanced) {
             // RTT measurement
-            if(c->rtt_start.tv_sec) {
+            // check the measurement was started and the transmit number matches the last retransmit
+            if(c->rtt_start.tv_sec && hdr.tra == c->snd.trs) {
+                // check the acknowledged sequence number matches the sequence number of last RTT measurement sent
                 if(c->rtt_seq == hdr.ack) {
                     struct timeval now, diff;
                     gettimeofday(&now, NULL);
@@ -1126,21 +1128,25 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             c->snd.una = hdr.ack;
             c->dupack = 0;
 
-            // Increase the congestion window
-            if(c->snd.cwnd < c->snd.ssthresh) // slow start
-                c->snd.cwnd += min(data_acked, c->utcp->mtu);
-            else // congestion avoidance
-                c->snd.cwnd += max(1, c->utcp->mtu * c->utcp->mtu / c->snd.cwnd);
+            // Update congestion window size
+            // When the acknowledged transmit number matches the current transmit number, increase the congestion window.
+            // Otherwise on retransmit keep it low to leave the receiver time to catch up if busy.
+            if(hdr.tra == c->snd.trs) {
+                if(c->snd.cwnd < c->snd.ssthresh) // slow start
+                    c->snd.cwnd += min(data_acked, c->utcp->mtu);
+                else // congestion avoidance
+                    c->snd.cwnd += max(1, c->utcp->mtu * c->utcp->mtu / c->snd.cwnd);
 
-            // Don't let the send window be larger than either our or the receiver's buffer.
-            if(c->snd.cwnd > c->rcv.wnd)
-                c->snd.cwnd = c->rcv.wnd;
-            if(c->snd.cwnd > c->sndbuf.maxsize)
-                c->snd.cwnd = c->sndbuf.maxsize;
+                // Don't let the send window be larger than either our or the receiver's buffer.
+                if(c->snd.cwnd > c->rcv.wnd)
+                    c->snd.cwnd = c->rcv.wnd;
+                if(c->snd.cwnd > c->sndbuf.maxsize)
+                    c->snd.cwnd = c->sndbuf.maxsize;
 
-            // limit to cwnd_max
-            if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
-                c->snd.cwnd = c->cwnd_max;
+                // limit to cwnd_max
+                if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
+                    c->snd.cwnd = c->cwnd_max;
+            }
 
             // Check if we have sent a FIN that is now ACKed.
             switch(c->state) {
