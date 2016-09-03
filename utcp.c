@@ -899,12 +899,7 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
     }
 
     if(c->recv) {
-        ssize_t rxd = c->recv(c, data, len);
-        if(rxd != len) {
-            // TODO: handle the application not accepting all data.
-            debug("Error: handle_in_order rxd:%ld != len:%lu\n", (long)rxd, (unsigned long)len);
-            abort();
-        }
+        c->recv(c, data, len);
     }
 
     if(c->rcvbuf.used)

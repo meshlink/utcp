@@ -47,7 +47,7 @@ typedef bool (*utcp_pre_accept_t)(struct utcp *utcp, uint16_t port);
 typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, uint16_t port);
 
 typedef ssize_t (*utcp_send_t)(struct utcp *utcp, const void *data, size_t len);
-typedef ssize_t (*utcp_recv_t)(struct utcp_connection *connection, const void *data, size_t len);
+typedef void (*utcp_recv_t)(struct utcp_connection *connection, const void *data, size_t len);
 
 typedef void (*utcp_ack_t)(struct utcp_connection *connection, size_t len);
 typedef void (*utcp_poll_t)(struct utcp_connection *connection, size_t len);
