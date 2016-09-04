@@ -43,6 +43,10 @@ struct utcp_connection;
 #define UTCP_SHUT_WR 1
 #define UTCP_SHUT_RDWR 2
 
+// for the send callback
+#define UTCP_ERROR -1
+#define UTCP_WOULDBLOCK -2
+
 typedef bool (*utcp_pre_accept_t)(struct utcp *utcp, uint16_t port);
 typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, uint16_t port);
 
