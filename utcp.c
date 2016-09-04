@@ -386,14 +386,43 @@ uint32_t buffer_free(const struct buffer *buf) {
     return buf->maxsize - buf->used;
 }
 
+static void utcp_send_error(const pkt_t *pkt, size_t len, ssize_t sent, bool drop) {
+    if(sent != len) {
+        if(sent > len) {
+            debug("Error: sent packet %u and ack %u but with a larger size than it should, %u of %u bytes sent", pkt->hdr.seq, pkt->hdr.ack, sent, len);
+        }
+        else if(sent > sizeof struct hdr) {
+            debug("Debug: partially sent packet %u and ack %u with %u of %u bytes sent, %s", pkt->hdr.seq, pkt->hdr.ack, sent, len, drop? "dropping the packet" : "splitting up the packet and retrying it later");
+        }
+        else if(sent >= 0) {
+            // we do not handle split packets where the header got broken
+            debug("Warning: failed to send packet %u and ack %u with only %u of %u bytes packet size sent, %s", pkt->hdr.seq, pkt->hdr.ack, sent, len, drop? "dropping the packet" : "retrying it later");
+        }
+        else if(sent == UTCP_WOULDBLOCK) {
+            debug("Debug: failed to send packet %u and ack %u with UTCP_WOULDBLOCK, %s", pkt->hdr.seq, pkt->hdr.ack, drop? "dropping the packet" : "retrying it later");
+        }
+        else {
+            // the pkt receiver might have gone offline causing the routing to fail
+            // drop the packet and continue
+            debug("Error: failed to send packet %u and ack %u with error %u, %s", pkt->hdr.seq, pkt->hdr.ack, sent, drop? "dropping the packet" : "retrying it later");
+        }
+    }
+    else if(drop) {
+        debug("Error: failed to send packet %u and ack %u, dropping the packet [sent=%u]", pkt->hdr.seq, pkt->hdr.ack, sent);
+    }
+}
+
 static bool utcp_send_packet_or_queue(struct utcp *utcp, const pkt_t *pkt, size_t len) {
     ssize_t sent = utcp->send(utcp, pkt, len);
     if(sent != len) {
         if(sent > len) {
+            utcp_send_error(pkt, len, sent, false);
         }
         else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
             // when no data could be sent with possibly the header broken
             // or when the socket would block, queue and retry later
+            utcp_send_error(pkt, len, sent, false);
+
             pkt_entry_t *entry = xzalloc(sizeof *entry);
             if(!entry) {
                 debug("Error: out of memory");
@@ -410,11 +439,14 @@ static bool utcp_send_packet_or_queue(struct utcp *utcp, const pkt_t *pkt, size_
         else {
             // the pkt receiver might have gone offline causing the routing to fail
             // drop the packet and continue
+            utcp_send_error(pkt, len, sent, true);
+
             return false;
         }
     }
     return true;
 }
+
 
 // Connections are stored in a sorted list.
 // This gives O(log(N)) lookup time, O(N log(N)) insertion time and O(N) deletion time.
@@ -1663,16 +1695,20 @@ struct timeval utcp_timeout(struct utcp *utcp) {
         ssize_t sent = utcp->send(utcp, entry->pkt, entry->len);
         if(sent != entry->len) {
             if(sent > entry->len) {
+                utcp_send_error(entry->pkt, entry->len, sent, false);
             }
             else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
                 // when no data could be sent with possibly the header broken
                 // or when the socket would block, keep queued and retry later
+                utcp_send_error(entry->pkt, entry->len, sent, false);
+
                 // return with 1ms timeout
                 return {0,1000};
             }
             else {
                 // the pkt receiver might have gone offline causing the routing to fail
                 // drop the packet and continue
+                utcp_send_error(entry->pkt, entry->len, sent, true);
             }
         }
 
