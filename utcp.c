@@ -1652,6 +1652,33 @@ int utcp_abort(struct utcp_connection *c) {
  * or maybe a negative value if the timeout is infinite.
  */
 struct timeval utcp_timeout(struct utcp *utcp) {
+
+    // attempt to send packets from pending queue
+    for list_each(struct pkt_entry_t, entry, utcp->pending_to_send) {
+        if(!entry || !entry->pkt) {
+            list_delete_node(node);
+            continue;
+        }
+
+        ssize_t sent = utcp->send(utcp, entry->pkt, entry->len);
+        if(sent != entry->len) {
+            if(sent > entry->len) {
+            }
+            else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+                // when no data could be sent with possibly the header broken
+                // or when the socket would block, keep queued and retry later
+                // return with 1ms timeout
+                return {0,1000};
+            }
+            else {
+                // the pkt receiver might have gone offline causing the routing to fail
+                // drop the packet and continue
+            }
+        }
+
+        list_delete_node(node);
+    }
+
     struct timeval now;
     gettimeofday(&now, NULL);
     struct timeval next = {now.tv_sec + 3600, now.tv_usec};
