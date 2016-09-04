@@ -662,11 +662,26 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
         buffer_copy(&c->sndbuf, pkt->data, bufpos, seglen);
 
-        print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
-        if(!c->utcp->send(c->utcp, pkt, sizeof pkt->hdr + seglen)) {
-            debug("Error: utcp ack() failed to send pkt %u with ack %u", pkt->hdr.seq, pkt->hdr.ack);
-            // break loop and hope to recover so time later
-            break;
+        size_t pktlen = sizeof pkt->hdr + seglen;
+        print_packet(c->utcp, "send", pkt, pktlen);
+        ssize_t sent = c->utcp->send(c->utcp, pkt, pktlen);
+        if(sent != pktlen) {
+            if(sent > pktlen) {
+                utcp_send_error(pkt, pktlen, sent, false);
+            }
+            else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+                // when no data could be sent with possibly the header broken
+                // or when the socket would block, don't advance but retry later
+                utcp_send_error(pkt, pktlen, sent, false);
+                break;
+            }
+            else {
+                // the pkt receiver might have gone offline causing the routing to fail
+                // break loop and hope to recover some time later
+                // it would only cause a retransmit when skipped
+                utcp_send_error(pkt, pktlen, sent, false);
+                break;
+            }
         }
 
         if(!c->rtt_start.tv_sec) {
