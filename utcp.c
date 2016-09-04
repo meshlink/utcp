@@ -29,6 +29,7 @@
 #include <sys/time.h>
 
 #include "utcp_priv.h"
+#include "list.h"
 
 #ifndef EBADMSG
 #define EBADMSG         104
@@ -141,6 +142,14 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 #define debug(...)
 #define print_packet(...)
 #endif
+
+static void free_pkt_entry(struct pkt_entry_t *entry) {
+    if(entry) {
+        if(entry->pkt)
+            free(entry->pkt);
+        free(entry);
+    }
+}
 
 static void start_connection_timer(struct utcp_connection *c) {
     gettimeofday(&c->conn_timeout, NULL);
@@ -1693,6 +1702,7 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
     utcp->mtu = DEFAULT_MTU;
     utcp->timeout = DEFAULT_USER_TIMEOUT; // sec
     utcp->rto = START_RTO; // usec
+    utcp->pending_to_send = list_alloc((list_action_t)free_pkt_entry);
 
     return utcp;
 }
@@ -1700,6 +1710,8 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 void utcp_exit(struct utcp *utcp) {
     if(!utcp)
         return;
+    if(utcp->pending_to_send)
+        list_delete_list(utcp->pending_to_send);
     for(int i = 0; i < utcp->nconnections; i++) {
         if(!utcp->connections[i]->reapable)
             debug("Warning, freeing unclosed connection %p\n", utcp->connections[i]);

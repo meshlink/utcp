@@ -59,6 +59,11 @@ struct pkt_t {
     char            data[];
 };
 
+struct pkt_entry_t {
+    struct pkt_t    *pkt;
+    uint32_t        len;
+};
+
 enum state {
     CLOSED,
     LISTEN,
@@ -196,6 +201,8 @@ struct utcp {
     struct utcp_connection **connections;
     int nconnections;
     int nallocated;
+
+    struct list_t *pending_to_send;
 };
 
 #endif
