@@ -638,7 +638,7 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
     set_state(c, ESTABLISHED);
 }
 
-static void ack(struct utcp_connection *c, bool sendatleastone) {
+static bool ack(struct utcp_connection *c, bool sendatleastone) {
     int32_t left = seqdiff(c->snd.last, c->snd.nxt);
     assert(left >= 0);
 
@@ -675,6 +675,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
     pkt->hdr.ctl = ACK;
     pkt->hdr.aux = 0;
 
+    bool err = false;
     do {
         uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
         uint32_t bufpos = seqdiff(c->snd.nxt, c->snd.una);
@@ -708,6 +709,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
                 // when no data could be sent with possibly the header broken
                 // or when the socket would block, don't advance but retry later
                 utcp_send_error(pkt, pktlen, sent, false);
+                err = true;
                 break;
             }
             else {
@@ -715,6 +717,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
                 // break loop and hope to recover some time later
                 // it would only cause a retransmit when skipped
                 utcp_send_error(pkt, pktlen, sent, false);
+                err = true;
                 break;
             }
         }
@@ -731,6 +734,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
     } while(left);
 
     free(pkt);
+    return !err;
 }
 
 ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
