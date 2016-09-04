@@ -1834,9 +1834,9 @@ struct timeval utcp_timeout(struct utcp *utcp) {
         }
 
         if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT)) {
-            ssize_t sent = c->poll(c, buffer_free(&c->sndbuf));
-            if(sent < 0) {
-                // return with 1ms timeout
+            int err = c->poll(c, buffer_free(&c->sndbuf));
+            if(err || c->sndbuf.used ) {
+                // return with 1ms timeout as there's more to send
                 return {0,1000};
             }
         }
