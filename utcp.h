@@ -54,7 +54,7 @@ typedef ssize_t (*utcp_send_t)(struct utcp *utcp, const void *data, size_t len);
 typedef void (*utcp_recv_t)(struct utcp_connection *connection, const void *data, size_t len);
 
 typedef void (*utcp_ack_t)(struct utcp_connection *connection, size_t len);
-typedef void (*utcp_poll_t)(struct utcp_connection *connection, size_t len);
+typedef ssize_t (*utcp_poll_t)(struct utcp_connection *connection, size_t len);
 
 extern struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv);
 extern void utcp_exit(struct utcp *utcp);

@@ -741,7 +741,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
     if(c->reapable) {
         debug("Error: send() called on closed connection %p\n", c);
         errno = EBADF;
-        return -1;
+        return UTCP_ERROR;
     }
 
     switch(c->state) {
@@ -751,7 +751,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
     case SYN_RECEIVED:
         debug("Error: send() called on unconnected connection %p\n", c);
         errno = ENOTCONN;
-        return -1;
+        return UTCP_ERROR;
     case ESTABLISHED:
     case CLOSE_WAIT:
         break;
@@ -762,7 +762,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
     case TIME_WAIT:
         debug("Error: send() called on closing connection %p\n", c);
         errno = EPIPE;
-        return -1;
+        return UTCP_ERROR;
     }
 
     // Add data to send buffer
@@ -772,18 +772,19 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
     if(!data) {
         errno = EFAULT;
-        return -1;
+        return UTCP_ERROR;
     }
 
     len = buffer_put(&c->sndbuf, data, len);
     if(len <= 0) {
         errno = EWOULDBLOCK;
-        return 0;
+        return UTCP_WOULDBLOCK;
     }
 
     c->snd.last += len;
 
-    ack(c, false);
+    if(!ack(c, false))
+        return UTCP_WOULDBLOCK;
     if(!timerisset(&c->rtrx_timeout))
         start_retransmit_timer(c);
     if(!timerisset(&c->conn_timeout))
@@ -1831,8 +1832,13 @@ struct timeval utcp_timeout(struct utcp *utcp) {
                 next = c->rtrx_timeout;
         }
 
-        if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
-            c->poll(c, buffer_free(&c->sndbuf));
+        if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT)) {
+            ssize_t sent = c->poll(c, buffer_free(&c->sndbuf));
+            if(sent < 0) {
+                // return with 1ms timeout
+                return {0,1000};
+            }
+        }
     }
 
     struct timeval diff;
