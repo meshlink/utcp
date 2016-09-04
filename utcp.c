@@ -386,6 +386,35 @@ uint32_t buffer_free(const struct buffer *buf) {
     return buf->maxsize - buf->used;
 }
 
+static bool utcp_send_packet_or_queue(struct utcp *utcp, const pkt_t *pkt, size_t len) {
+    ssize_t sent = utcp->send(utcp, pkt, len);
+    if(sent != len) {
+        if(sent > len) {
+        }
+        else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+            // when no data could be sent with possibly the header broken
+            // or when the socket would block, queue and retry later
+            pkt_entry_t *entry = xzalloc(sizeof *entry);
+            if(!entry) {
+                debug("Error: out of memory");
+                return false;
+            }
+
+            entry->pkt = pkt;
+            entry->len = len;
+            if(!list_insert_tail(utcp->pending_to_send, entry)) {
+                debug("Error: out of memory");
+                return false;
+            }
+        }
+        else {
+            // the pkt receiver might have gone offline causing the routing to fail
+            // drop the packet and continue
+            return false;
+        }
+    }
+    return true;
+}
 
 // Connections are stored in a sorted list.
 // This gives O(log(N)) lookup time, O(N log(N)) insertion time and O(N) deletion time.
