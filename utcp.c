@@ -767,8 +767,6 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
         return UTCP_ERROR;
     }
 
-    // Add data to send buffer
-
     if(!len)
         return 0;
 
@@ -777,19 +775,29 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
         return UTCP_ERROR;
     }
 
+    // first attempt to free some buffer
+    int ack_err = ack(c, false);
+
+    // attempt to add the new data to the send buffer and break when there's no space left
     len = buffer_put(&c->sndbuf, data, len);
     if(len <= 0) {
         errno = EWOULDBLOCK;
         return UTCP_WOULDBLOCK;
     }
 
+    // advance upper send buffer position to be sent
     c->snd.last += len;
 
-    ack(c, false);
+    // when the ack above passed call it again with the new buffered data
+    if(!ack_err)
+        ack(c, false);
+
+    // if not set already initialize the timers
     if(!timerisset(&c->rtrx_timeout))
         start_retransmit_timer(c);
     if(!timerisset(&c->conn_timeout))
         start_connection_timer(c);
+
     return len;
 }
 
