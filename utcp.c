@@ -783,8 +783,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
     c->snd.last += len;
 
-    if(!ack(c, false))
-        return UTCP_WOULDBLOCK;
+    ack(c, false);
     if(!timerisset(&c->rtrx_timeout))
         start_retransmit_timer(c);
     if(!timerisset(&c->conn_timeout))
