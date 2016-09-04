@@ -564,10 +564,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
             return;
     }
 
-    struct {
-        struct hdr hdr;
-        char data[];
-    } *pkt;
+    struct pkt_t *pkt;
 
     pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
     if(!pkt)
@@ -686,10 +683,7 @@ static void retransmit(struct utcp_connection *c) {
 
     struct utcp *utcp = c->utcp;
 
-    struct {
-        struct hdr hdr;
-        char data[];
-    } *pkt;
+    struct pkt_t *pkt;
 
     pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
     if(!pkt)

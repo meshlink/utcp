@@ -54,6 +54,11 @@ struct hdr {
     uint16_t aux; // other stuff
 };
 
+struct pkt_t {
+    struct hdr      hdr;
+    char            data[];
+};
+
 enum state {
     CLOSED,
     LISTEN,
