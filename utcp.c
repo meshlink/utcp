@@ -638,7 +638,7 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
     set_state(c, ESTABLISHED);
 }
 
-static bool ack(struct utcp_connection *c, bool sendatleastone) {
+static int ack(struct utcp_connection *c, bool sendatleastone) {
     int32_t left = seqdiff(c->snd.last, c->snd.nxt);
     assert(left >= 0);
 
@@ -655,18 +655,20 @@ static bool ack(struct utcp_connection *c, bool sendatleastone) {
     if(!sendatleastone) {
         // then don't if we don't have any new data,
         if(!left)
-            return;
+            return 0;
 
         // and avoid sending small packets.
         if(left < c->utcp->mtu && seqdiff(c->snd.last, c->snd.una) >= c->utcp->mtu)
-            return;
+            return 0;
     }
 
     struct pkt_t *pkt;
 
     pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
-    if(!pkt)
-        return;
+    if(!pkt) {
+        debug("Error: out of memory");
+        return UTCP_ERROR;
+    }
 
     pkt->hdr.src = c->src;
     pkt->hdr.dst = c->dst;
@@ -675,7 +677,7 @@ static bool ack(struct utcp_connection *c, bool sendatleastone) {
     pkt->hdr.ctl = ACK;
     pkt->hdr.aux = 0;
 
-    bool err = false;
+    int err = 0;
     do {
         uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
         uint32_t bufpos = seqdiff(c->snd.nxt, c->snd.una);
@@ -709,7 +711,7 @@ static bool ack(struct utcp_connection *c, bool sendatleastone) {
                 // when no data could be sent with possibly the header broken
                 // or when the socket would block, don't advance but retry later
                 utcp_send_error(pkt, pktlen, sent, false);
-                err = true;
+                err = UTCP_WOULDBLOCK;
                 break;
             }
             else {
@@ -717,7 +719,7 @@ static bool ack(struct utcp_connection *c, bool sendatleastone) {
                 // break loop and hope to recover some time later
                 // it would only cause a retransmit when skipped
                 utcp_send_error(pkt, pktlen, sent, false);
-                err = true;
+                err = UTCP_ERROR;
                 break;
             }
         }
@@ -734,7 +736,7 @@ static bool ack(struct utcp_connection *c, bool sendatleastone) {
     } while(left);
 
     free(pkt);
-    return !err;
+    return err;
 }
 
 ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
