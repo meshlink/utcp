@@ -1761,11 +1761,11 @@ struct timeval utcp_timeout(struct utcp *utcp) {
                 struct pkt_t *copy = malloc(copylen);
                 if(!copy) {
                     debug("Error: out of memory");
-                    return false;
+                    return (struct timeval){0,1000};
                 }
 
-                memcpy(copy, pkt, sizeof(struct hdr));
-                memcpy(copy + sizeof(struct hdr), pkt + (sent - sizeof(struct hdr)), entry->len - sent);
+                memcpy(copy, entry->pkt, sizeof(struct hdr));
+                memcpy(copy + sizeof(struct hdr), entry->pkt + (sent - sizeof(struct hdr)), entry->len - sent);
                 copy->hdr.seq += sent - sizeof(struct hdr);
 
                 free(entry->pkt);
