@@ -391,11 +391,8 @@ static void utcp_send_error(const struct pkt_t *pkt, size_t len, ssize_t sent, b
         if(sent > len) {
             debug("Error: sent packet %u and ack %u but with a larger size than it should, %u of %u bytes sent", pkt->hdr.seq, pkt->hdr.ack, sent, len);
         }
-        else if(sent > sizeof(struct hdr)) {
-            debug("Debug: partially sent packet %u and ack %u with %u of %u bytes sent, %s", pkt->hdr.seq, pkt->hdr.ack, sent, len, drop? "dropping the packet" : "splitting up the packet and retrying it later");
-        }
         else if(sent >= 0) {
-            // we do not handle split packets where the header got broken
+            // we do not handle split packets
             debug("Warning: failed to send packet %u and ack %u with only %u of %u bytes packet size sent, %s", pkt->hdr.seq, pkt->hdr.ack, sent, len, drop? "dropping the packet" : "retrying it later");
         }
         else if(sent == UTCP_WOULDBLOCK) {
@@ -417,34 +414,6 @@ static bool utcp_send_packet_or_queue(struct utcp *utcp, const struct pkt_t *pkt
     if(sent != len) {
         if(sent > len) {
             utcp_send_error(pkt, len, sent, false);
-        }
-        else if(sent > sizeof(struct hdr)) {
-            // if partial sent, split and queue
-            utcp_send_error(pkt, len, sent, false);
-
-            size_t copylen = (len - sent) + sizeof(struct hdr);
-            struct pkt_t *copy = malloc(copylen);
-            if(!copy) {
-                debug("Error: out of memory");
-                return false;
-            }
-
-            memcpy(copy, pkt, sizeof(struct hdr));
-            memcpy(copy + sizeof(struct hdr), pkt + (sent - sizeof(struct hdr)), len - sent);
-            copy->hdr.seq += sent - sizeof(struct hdr);
-
-            struct pkt_entry_t *entry = xzalloc(sizeof *entry);
-            if(!entry) {
-                debug("Error: out of memory");
-                return false;
-            }
-
-            entry->pkt = copy;
-            entry->len = copylen;
-            if(!list_insert_tail(utcp->pending_to_send, entry)) {
-                debug("Error: out of memory");
-                return false;
-            }
         }
         else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
             // when no data could be sent with possibly the header broken
@@ -699,13 +668,6 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
         if(sent != pktlen) {
             if(sent > pktlen) {
                 utcp_send_error(pkt, pktlen, sent, false);
-            }
-            else if(sent > sizeof(struct hdr)) {
-                // if partial sent, cut the buffer
-                utcp_send_error(pkt, pktlen, sent, false);
-                // break loop but advance
-                seglen -= pktlen - sent;
-                left = 0;
             }
             else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
                 // when no data could be sent with possibly the header broken
@@ -1752,26 +1714,6 @@ struct timeval utcp_timeout(struct utcp *utcp) {
         if(sent != entry->len) {
             if(sent > entry->len) {
                 utcp_send_error(entry->pkt, entry->len, sent, false);
-            }
-            else if(sent > sizeof(struct hdr)) {
-                // if partial sent, replace packet and cut the length
-                utcp_send_error(entry->pkt, entry->len, sent, false);
-
-                size_t copylen = (entry->len - sent) + sizeof(struct hdr);
-                struct pkt_t *copy = malloc(copylen);
-                if(!copy) {
-                    debug("Error: out of memory");
-                    return (struct timeval){0,1000};
-                }
-
-                memcpy(copy, entry->pkt, sizeof(struct hdr));
-                memcpy(copy + sizeof(struct hdr), entry->pkt + (sent - sizeof(struct hdr)), entry->len - sent);
-                copy->hdr.seq += sent - sizeof(struct hdr);
-
-                free(entry->pkt);
-                entry->pkt = copy;
-                entry->len = copylen;
-                return (struct timeval){0,1000};
             }
             else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
                 // when no data could be sent with possibly the header broken
