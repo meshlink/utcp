@@ -43,14 +43,18 @@ struct utcp_connection;
 #define UTCP_SHUT_WR 1
 #define UTCP_SHUT_RDWR 2
 
+// for the send callback
+#define UTCP_ERROR -1
+#define UTCP_WOULDBLOCK -2
+
 typedef bool (*utcp_pre_accept_t)(struct utcp *utcp, uint16_t port);
 typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, uint16_t port);
 
 typedef ssize_t (*utcp_send_t)(struct utcp *utcp, const void *data, size_t len);
-typedef ssize_t (*utcp_recv_t)(struct utcp_connection *connection, const void *data, size_t len);
+typedef void (*utcp_recv_t)(struct utcp_connection *connection, const void *data, size_t len);
 
 typedef void (*utcp_ack_t)(struct utcp_connection *connection, size_t len);
-typedef void (*utcp_poll_t)(struct utcp_connection *connection, size_t len);
+typedef int (*utcp_poll_t)(struct utcp_connection *connection, size_t len);
 
 extern struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv);
 extern void utcp_exit(struct utcp *utcp);
