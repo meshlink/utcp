@@ -420,7 +420,7 @@ static bool utcp_send_packet_or_queue(struct utcp *utcp, const struct pkt_t *pkt
             // or when the socket would block, queue and retry later
             utcp_send_error(pkt, len, sent, false);
 
-            struct pkt_entry_t *entry = xzalloc(sizeof *entry);
+            struct pkt_entry_t *entry = malloc(sizeof *entry);
             if(!entry) {
                 debug("Error: out of memory");
                 return false;
@@ -428,10 +428,7 @@ static bool utcp_send_packet_or_queue(struct utcp *utcp, const struct pkt_t *pkt
 
             entry->pkt = pkt;
             entry->len = len;
-            if(!list_insert_tail(utcp->pending_to_send, entry)) {
-                debug("Error: out of memory");
-                return false;
-            }
+            list_insert_tail(utcp->pending_to_send, entry);
         }
         else {
             // the pkt receiver might have gone offline causing the routing to fail
