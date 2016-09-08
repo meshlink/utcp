@@ -519,7 +519,8 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
     print_packet(utcp, "send", &hdr, sizeof hdr);
     if(!utcp->send(utcp, &hdr, sizeof hdr)) {
         debug("Error: utcp_connect failed to send SYN");
-        abort();
+        free_connection(c);
+        return NULL;
     }
 
     start_connection_timer(c);
