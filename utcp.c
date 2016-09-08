@@ -386,7 +386,7 @@ uint32_t buffer_free(const struct buffer *buf) {
     return buf->maxsize - buf->used;
 }
 
-static void utcp_send_error(const struct pkt_t *pkt, size_t len, ssize_t sent, bool drop) {
+static void utcp_log_send_error(const struct pkt_t *pkt, size_t len, ssize_t sent, bool drop) {
     if(sent != len) {
         if(sent > len) {
             debug("Error: sent packet %u and ack %u but with a larger size than it should, %u of %u bytes sent", pkt->hdr.seq, pkt->hdr.ack, sent, len);
@@ -413,12 +413,12 @@ static bool utcp_send_packet_or_queue(struct utcp *utcp, const struct pkt_t *pkt
     ssize_t sent = utcp->send(utcp, pkt, len);
     if(sent != len) {
         if(sent > len) {
-            utcp_send_error(pkt, len, sent, false);
+            utcp_log_send_error(pkt, len, sent, false);
         }
         else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
             // when no data could be sent with possibly the header broken
             // or when the socket would block, queue and retry later
-            utcp_send_error(pkt, len, sent, false);
+            utcp_log_send_error(pkt, len, sent, false);
 
             struct pkt_entry_t *entry = malloc(sizeof *entry);
             if(!entry) {
@@ -433,7 +433,7 @@ static bool utcp_send_packet_or_queue(struct utcp *utcp, const struct pkt_t *pkt
         else {
             // the pkt receiver might have gone offline causing the routing to fail
             // drop the packet and continue
-            utcp_send_error(pkt, len, sent, true);
+            utcp_log_send_error(pkt, len, sent, true);
 
             return false;
         }
@@ -664,12 +664,12 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
         ssize_t sent = c->utcp->send(c->utcp, pkt, pktlen);
         if(sent != pktlen) {
             if(sent > pktlen) {
-                utcp_send_error(pkt, pktlen, sent, false);
+                utcp_log_send_error(pkt, pktlen, sent, false);
             }
             else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
                 // when no data could be sent with possibly the header broken
                 // or when the socket would block, don't advance but retry later
-                utcp_send_error(pkt, pktlen, sent, false);
+                utcp_log_send_error(pkt, pktlen, sent, false);
                 err = UTCP_WOULDBLOCK;
                 break;
             }
@@ -677,7 +677,7 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
                 // the pkt receiver might have gone offline causing the routing to fail
                 // break loop and hope to recover some time later
                 // it would only cause a retransmit when skipped
-                utcp_send_error(pkt, pktlen, sent, false);
+                utcp_log_send_error(pkt, pktlen, sent, false);
                 err = UTCP_ERROR;
                 break;
             }
@@ -1710,12 +1710,12 @@ struct timeval utcp_timeout(struct utcp *utcp) {
         ssize_t sent = utcp->send(utcp, entry->pkt, entry->len);
         if(sent != entry->len) {
             if(sent > entry->len) {
-                utcp_send_error(entry->pkt, entry->len, sent, false);
+                utcp_log_send_error(entry->pkt, entry->len, sent, false);
             }
             else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
                 // when no data could be sent with possibly the header broken
                 // or when the socket would block, keep queued and retry later
-                utcp_send_error(entry->pkt, entry->len, sent, false);
+                utcp_log_send_error(entry->pkt, entry->len, sent, false);
 
                 // return with 1ms timeout
                 return (struct timeval){0,1000};
@@ -1723,7 +1723,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
             else {
                 // the pkt receiver might have gone offline causing the routing to fail
                 // drop the packet and continue
-                utcp_send_error(entry->pkt, entry->len, sent, true);
+                utcp_log_send_error(entry->pkt, entry->len, sent, true);
             }
         }
 
