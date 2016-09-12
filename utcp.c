@@ -649,10 +649,6 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 static int ack(struct utcp_connection *c, bool sendatleastone) {
     // attempt to send packets from pending queue
     if(!utcp_send_queued(c)) {
-        // retry with 1ms timeout
-        struct timeval retry = {0,1000};
-        if(timercmp(&retry, &next, <))
-            next = retry;
         return UTCP_WOULDBLOCK;
     }
 
