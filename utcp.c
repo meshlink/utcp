@@ -680,6 +680,10 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
 }
 
 static int ack(struct utcp_connection *c, bool sendatleastone) {
+    if(sendatleastone) {
+        c->sendatleastone = true;
+    }
+
     // attempt to send packets from pending queue
     if(!utcp_send_queued(c)) {
         return UTCP_WOULDBLOCK;
@@ -698,7 +702,7 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
         left = cwndleft;
 
     // If we don't need to send an ACK...
-    if(!sendatleastone) {
+    if(!c->sendatleastone) {
         // then don't if we don't have any new data,
         if(!left)
             return 0;
@@ -765,6 +769,10 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
             }
         }
 
+        // if anything sent, andvance
+        c->snd.nxt += seglen;
+        c->sendatleastone = false;
+
         // on outgoing progess, initialize the timers if not already
         if(seglen > 0) {
             if(!timerisset(&c->rtrx_timeout))
@@ -779,8 +787,6 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
             c->rtt_seq = pkt->hdr.seq + seglen;
             debug("Starting RTT measurement, expecting ack %u\n", c->rtt_seq);
         }
-
-        c->snd.nxt += seglen;
 
     } while(left);
 

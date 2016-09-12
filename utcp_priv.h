@@ -164,6 +164,7 @@ struct utcp_connection {
     struct buffer rcvbuf;
     struct sack sacks[NSACKS];
     struct list_t *pending_to_send;
+    bool sendatleastone;
 
     // Per-socket options
 
