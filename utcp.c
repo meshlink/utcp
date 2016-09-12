@@ -618,14 +618,6 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
     int32_t left = seqdiff(c->snd.last, c->snd.nxt);
     assert(left >= 0);
 
-    // when there's data to be sent, initialize the timers if not already
-    if(left > 0) {
-        if(!timerisset(&c->rtrx_timeout))
-            start_retransmit_timer(c);
-        if(!timerisset(&c->conn_timeout))
-            start_connection_timer(c);
-    }
-
     // limit by congestion window increased by utcp->mtu on each advance
     int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
     debug("cwndleft = %d (of %d)\n", cwndleft, c->snd.cwnd);
@@ -701,6 +693,14 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
                 err = UTCP_ERROR;
                 break;
             }
+        }
+
+        // on outgoing progess, initialize the timers if not already
+        if(seglen > 0) {
+            if(!timerisset(&c->rtrx_timeout))
+                start_retransmit_timer(c);
+            if(!timerisset(&c->conn_timeout))
+                start_connection_timer(c);
         }
 
         // on successful send, start the RTT measurement if none already in progress
