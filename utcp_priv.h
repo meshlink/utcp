@@ -54,6 +54,16 @@ struct hdr {
     uint16_t aux; // other stuff
 };
 
+struct pkt_t {
+    struct hdr      hdr;
+    char            data[];
+};
+
+struct pkt_entry_t {
+    struct pkt_t    *pkt;
+    uint32_t        len;
+};
+
 enum state {
     CLOSED,
     LISTEN,
@@ -153,6 +163,8 @@ struct utcp_connection {
     struct buffer sndbuf;
     struct buffer rcvbuf;
     struct sack sacks[NSACKS];
+    struct list_t *pending_to_send;
+    bool sendatleastone;
 
     // Per-socket options
 
