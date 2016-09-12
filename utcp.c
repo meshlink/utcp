@@ -1795,17 +1795,15 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 
         // when the connection is established, process new data to be sent
         if(c->state == ESTABLISHED || c->state == CLOSE_WAIT) {
-            // when the buffer is exhausted, just attempt to send the buffered data
-            if(!buffer_free(&c->sndbuf)) {
-                ack(c, false);
-            }
-            // otherwise when the poll callback is set poll new data to be sent
-            else if(c->poll) {
+            // when the poll callback is set and there's free buffer left, poll new data to the buffer
+            if(buffer_free(&c->sndbuf) && c->poll) {
                 c->poll(c, buffer_free(&c->sndbuf));
             }
 
-            // when after the poll there's still data left in the buffer, return with a 1ms timeout
-            if(c->sndbuf.used) {
+            // try to send any remainining buffered data
+            // the polling might only call utcp_send and ack when there's something new to send
+            // on error return with a 1ms timeout to retry soon
+            if(0 != ack(c, false)) {
                 return (struct timeval){0,1000};
             }
         }
