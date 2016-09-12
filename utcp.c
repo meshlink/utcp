@@ -1775,7 +1775,7 @@ static bool utcp_send_queued(struct utcp_connection *c) {
 struct timeval utcp_timeout(struct utcp *utcp) {
     struct timeval now;
     gettimeofday(&now, NULL);
-    struct timeval next = {now.tv_sec + 3600, now.tv_usec};
+    struct timeval next = {3600, 0};
 
     for(int i = 0; i < utcp->nconnections; i++) {
         struct utcp_connection *c = utcp->connections[i];
@@ -1801,8 +1801,10 @@ struct timeval utcp_timeout(struct utcp *utcp) {
                     c->recv(c, NULL, 0);
                 continue;
             }
-            if(timercmp(&c->conn_timeout, &next, <))
-                next = c->conn_timeout;
+            struct timeval diff;
+            timersub(&c->conn_timeout, &now, &diff);
+            if(timercmp(&diff, &next, <))
+                next = diff;
         }
 
         // attempt to send packets from pending queue
@@ -1819,12 +1821,17 @@ struct timeval utcp_timeout(struct utcp *utcp) {
             if(timercmp(&c->rtrx_timeout, &now, <)) {
                 debug("retransmit()\n");
                 if(!retransmit(c)) {
-                    // when the retransmit failed, retry in 1ms
-                    start_retransmit_timer_in(c, 1000);
+                    // when the retransmit failed, retry with 1ms timeout
+                    struct timeval retry = {0,1000};
+                    if(timercmp(&retry, &next, <))
+                        next = retry;
+                    continue;
                 }
             }
-            if(timercmp(&c->rtrx_timeout, &next, <))
-                next = c->rtrx_timeout;
+            struct timeval diff;
+            timersub(&c->rtrx_timeout, &now, &diff);
+            if(timercmp(&diff, &next, <))
+                next = diff;
         }
 
         // when the connection is established, process all data to be sent
@@ -1838,25 +1845,23 @@ struct timeval utcp_timeout(struct utcp *utcp) {
             // the polling might only call utcp_send and ack when there's something new to send
             // on error return with a 1ms timeout to retry soon
             if(0 != ack(c, false)) {
-                return (struct timeval){0,1000};
+                struct timeval retry = {0,1000};
+                if(timercmp(&retry, &next, <))
+                    next = retry;
             }
         }
         // also retry the last shutdown send if failed
         else if(c->state == FIN_WAIT_1 || c->state == CLOSING) {
             // on error return with a 1ms timeout to retry soon
             if(0 != ack(c, false)) {
-                return (struct timeval){0,1000};
+                struct timeval retry = {0,1000};
+                if(timercmp(&retry, &next, <))
+                    next = retry;
             }
         }
     }
 
-    if(timercmp(&next, &now, <)) {
-        return (struct timeval){0,0};
-    } else {
-        struct timeval diff;
-        timersub(&next, &now, &diff);
-        return diff;
-    }
+    return next;
 }
 
 bool utcp_is_active(struct utcp *utcp) {
