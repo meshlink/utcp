@@ -1807,6 +1807,13 @@ struct timeval utcp_timeout(struct utcp *utcp) {
                 return (struct timeval){0,1000};
             }
         }
+        // also retry the last shutdown send if failed
+        else if(c->state == FIN_WAIT_1 || c->state == CLOSING) {
+            // on error return with a 1ms timeout to retry soon
+            if(0 != ack(c, false)) {
+                return (struct timeval){0,1000};
+            }
+        }
     }
 
     struct timeval diff;
