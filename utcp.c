@@ -1062,56 +1062,54 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // Drop packets smaller than the header
 
-    struct hdr hdr;
-    if(len < sizeof hdr) {
+    if(len < sizeof(struct hdr)) {
         errno = EBADMSG;
         return -1;
     }
 
-    // Make a copy from the potentially unaligned data to a struct hdr
+    // Reinterpret potentially unaligned data to a pkt_t struct
 
-    memcpy(&hdr, data, sizeof hdr);
-    data += sizeof hdr;
-    len -= sizeof hdr;
+    const struct pkt_t *pkt = data;
+    len -= sizeof(struct hdr);
 
     // Drop packets with an unknown CTL flag
 
-    if(hdr.ctl & ~(SYN | ACK | RST | FIN)) {
+    if(pkt->hdr.ctl & ~(SYN | ACK | RST | FIN)) {
         errno = EBADMSG;
         return -1;
     }
 
     // Try to match the packet to an existing connection
 
-    struct utcp_connection *c = find_connection(utcp, hdr.dst, hdr.src);
+    struct utcp_connection *c = find_connection(utcp, pkt->hdr.dst, pkt->hdr.src);
 
     // Is it for a new connection?
 
     if(!c) {
         // Ignore RST packets
 
-        if(hdr.ctl & RST)
+        if(pkt->hdr.ctl & RST)
             return 0;
 
         // Is it a SYN packet and are we LISTENing?
 
-        if(hdr.ctl & SYN && !(hdr.ctl & ACK) && utcp->accept) {
+        if(pkt->hdr.ctl & SYN && !(pkt->hdr.ctl & ACK) && utcp->accept) {
             // If we don't want to accept it, send a RST back
-            if((utcp->pre_accept && !utcp->pre_accept(utcp, hdr.dst))) {
+            if((utcp->pre_accept && !utcp->pre_accept(utcp, pkt->hdr.dst))) {
                 len = 1;
                 goto reset;
             }
 
             // Try to allocate memory, otherwise send a RST back
-            c = allocate_connection(utcp, hdr.dst, hdr.src);
+            c = allocate_connection(utcp, pkt->hdr.dst, pkt->hdr.src);
             if(!c) {
                 len = 1;
                 goto reset;
             }
 
             // Return SYN+ACK, go to SYN_RECEIVED state
-            c->snd.wnd = hdr.wnd;
-            c->rcv.irs = hdr.seq;
+            c->snd.wnd = pkt->hdr.wnd;
+            c->rcv.irs = pkt->hdr.seq;
             c->rcv.nxt = c->rcv.irs + 1;
             set_state(c, SYN_RECEIVED);
 
@@ -1173,40 +1171,40 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // But it might be bigger than snd.nxt since we reset snd.nxt in retransmit and on triplicate ack.
     // And by package reordering it might be lower than snd.una, still it might have some useful data.
 
-    if((hdr.ctl & ACK) && (seqdiff(hdr.ack, c->snd.last) > 0)) {
+    if((pkt->hdr.ctl & ACK) && (seqdiff(pkt->hdr.ack, c->snd.last) > 0)) {
         debug("Packet ack seqno out of range: hdr.ack=%u snd.una=%u snd.nxt=%u snd.last=%u\n",
-            hdr.ack, c->snd.una, c->snd.nxt, c->snd.last);
+            pkt->hdr.ack, c->snd.una, c->snd.nxt, c->snd.last);
         // Ignore unacceptable RST packets.
-        if(hdr.ctl & RST)
+        if(pkt->hdr.ctl & RST)
             return 0;
         goto reset;
     }
 
-    c->snd.wnd = hdr.wnd; // TODO: move below
+    c->snd.wnd = pkt->hdr.wnd; // TODO: move below
 
     // 2. Advance snd.una and update retransmit timer
-    // process acks even when hdr.seq doesn't match to adapt early and
+    // process acks even when pkt->hdr.seq doesn't match to adapt early and
     // get triplicate ack check work even when on both ends packets are not acceptable
 
     uint32_t prevrcvnxt = c->rcv.nxt;
     uint32_t advanced = 0;
 
-    if(hdr.ctl & ACK)
+    if(pkt->hdr.ctl & ACK)
     {
-        int32_t progress = seqdiff(hdr.ack, c->snd.una);
+        int32_t progress = seqdiff(pkt->hdr.ack, c->snd.una);
         advanced = (progress > 0)? progress: 0;
 
         if(advanced) {
             // RTT measurement
             if(c->rtt_start.tv_sec) {
-                if(c->rtt_seq == hdr.ack) {
+                if(c->rtt_seq == pkt->hdr.ack) {
                     struct timeval now, diff;
                     gettimeofday(&now, NULL);
                     timersub(&now, &c->rtt_start, &diff);
                     update_rtt(c, diff.tv_sec * USEC_PER_SEC + diff.tv_usec);
                     c->rtt_start.tv_sec = 0;
-                } else if(c->rtt_seq < hdr.ack) {
-                    debug("Cancelling RTT measurement: %u < %u\n", c->rtt_seq, hdr.ack);
+                } else if(c->rtt_seq < pkt->hdr.ack) {
+                    debug("Cancelling RTT measurement: %u < %u\n", c->rtt_seq, pkt->hdr.ack);
                     c->rtt_start.tv_sec = 0;
                 }
             }
@@ -1223,7 +1221,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                 case CLOSING:
                 case LAST_ACK:
                     // last ack is the FIN
-                    if(hdr.ack == c->snd.last)
+                    if(pkt->hdr.ack == c->snd.last)
                         data_acked--;
                     break;
                 default:
@@ -1245,7 +1243,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             if(seqdiff(c->snd.nxt, hdr.ack) < 0)
                 c->snd.nxt = hdr.ack;
 
-            c->snd.una = hdr.ack;
+            c->snd.una = pkt->hdr.ack;
             c->dupack = 0;
 
             // Increase the congestion window
@@ -1313,7 +1311,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     if(c->state == SYN_SENT)
         acceptable = true;
     else {
-        int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
+        int32_t rcv_offset = seqdiff(pkt->hdr.seq, c->rcv.nxt);
 
         // always accept control data packets that are ahead
         if(datalen == 0)
@@ -1366,9 +1364,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // seqno rolls back on retransmit, so possibly a previous ack got dropped
 
     if(!acceptable) {
-        debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcvbuf.maxsize);
+        debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, pkt->hdr.seq, len, c->rcv.nxt + c->rcvbuf.maxsize);
         // Ignore unacceptable RST packets.
-        if(hdr.ctl & RST)
+        if(pkt->hdr.ctl & RST)
             return 0;
         // Otherwise, send an ACK back in the hope things improve.
         // needed to trigger the triple ack and reset the sender's seqno
@@ -1378,10 +1376,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // 4. Handle RST packets
 
-    if(hdr.ctl & RST) {
+    if(pkt->hdr.ctl & RST) {
         switch(c->state) {
         case SYN_SENT:
-            if(!(hdr.ctl & ACK))
+            if(!(pkt->hdr.ctl & ACK))
                 return 0;
             // The peer has refused our connection.
             set_state(c, CLOSED);
@@ -1390,7 +1388,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                 c->recv(c, NULL, 0);
             return 0;
         case SYN_RECEIVED:
-            if(hdr.ctl & ACK)
+            if(pkt->hdr.ctl & ACK)
                 return 0;
             // We haven't told the application about this connection yet. Silently delete.
             free_connection(c);
@@ -1399,7 +1397,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case FIN_WAIT_1:
         case FIN_WAIT_2:
         case CLOSE_WAIT:
-            if(hdr.ctl & ACK)
+            if(pkt->hdr.ctl & ACK)
                 return 0;
             // The peer has aborted our connection.
             set_state(c, CLOSED);
@@ -1410,7 +1408,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case CLOSING:
         case LAST_ACK:
         case TIME_WAIT:
-            if(hdr.ctl & ACK)
+            if(pkt->hdr.ctl & ACK)
                 return 0;
             // As far as the application is concerned, the connection has already been closed.
             // If it has called utcp_close() already, we can immediately free this connection.
@@ -1434,14 +1432,14 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // 5a. SYN state changes
 
-    if(hdr.ctl & SYN) {
+    if(pkt->hdr.ctl & SYN) {
         switch(c->state) {
         case SYN_SENT:
             // This is a SYNACK. It should always have ACKed the SYN.
             if(!advanced)
                 goto reset;
-            c->rcv.irs = hdr.seq;
-            c->rcv.nxt = hdr.seq;
+            c->rcv.irs = pkt->hdr.seq;
+            c->rcv.nxt = pkt->hdr.seq;
             c->rcv.wnd = c->rcvbuf.maxsize;
             set_state(c, ESTABLISHED);
             // TODO: notify application of this somehow.
@@ -1523,7 +1521,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // 5c. FIN state changes
 
     bool closed = false;
-    if((hdr.ctl & FIN) && hdr.seq + len == c->rcv.nxt) {
+    if((pkt->hdr.ctl & FIN) && pkt->hdr.seq + len == c->rcv.nxt) {
         switch(c->state) {
         case SYN_SENT:
         case SYN_RECEIVED:
@@ -1579,7 +1577,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // Handle new incoming data.
     if(handle_incoming)
     {
-        handle_incoming_data(c, hdr.seq, data, datalen);
+        handle_incoming_data(c, pkt->hdr.seq, pkt->data, datalen);
     }
 
     // Inform the application when the peer closed the connection.
