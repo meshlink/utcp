@@ -826,39 +826,54 @@ static bool retransmit(struct utcp_connection *c) {
     debug("retransmit() called\n.");
 
     struct utcp *utcp = c->utcp;
-    struct pkt_t *pkt;
-    pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
-    if(!pkt)
-        return false;
-
-    pkt->hdr.src = c->src;
-    pkt->hdr.dst = c->dst;
-    pkt->hdr.wnd = c->rcv.wnd;
-    pkt->hdr.aux = 0;
 
     switch(c->state) {
         case SYN_SENT:
             // Send our SYN again
+            struct pkt_t *pkt;
+            pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+            if(!pkt)
+                return false;
+
+            pkt->hdr.src = c->src;
+            pkt->hdr.dst = c->dst;
+            pkt->hdr.wnd = c->rcv.wnd;
+            pkt->hdr.aux = 0;
+
             pkt->hdr.seq = c->snd.iss;
             pkt->hdr.ack = 0;
             pkt->hdr.ctl = SYN;
             print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
             if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
                 debug("Error: retransmit failed to send SYN");
+                free(pkt);
                 return false;
             }
+            free(pkt);
             break;
 
         case SYN_RECEIVED:
             // Send SYNACK again
+            struct pkt_t *pkt;
+            pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+            if(!pkt)
+                return false;
+
+            pkt->hdr.src = c->src;
+            pkt->hdr.dst = c->dst;
+            pkt->hdr.wnd = c->rcv.wnd;
+            pkt->hdr.aux = 0;
+
             pkt->hdr.seq = c->snd.nxt;
             pkt->hdr.ack = c->rcv.nxt;
             pkt->hdr.ctl = SYN | ACK;
             print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
             if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
                 debug("Error: retransmit failed to send SYN | ACK");
+                free(pkt);
                 return false;
             }
+            free(pkt);
             break;
 
         case ESTABLISHED:
@@ -874,33 +889,6 @@ static bool retransmit(struct utcp_connection *c) {
             c->snd.cwnd = utcp->mtu;
             if( c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max )
                 c->snd.cwnd = c->cwnd_max;
-
-            // Send unacked data again.
-            pkt->hdr.seq = c->snd.una;
-            pkt->hdr.ack = c->rcv.nxt;
-            pkt->hdr.ctl = ACK;
-            uint32_t len = seqdiff(c->snd.last, c->snd.una);
-            if(len > utcp->mtu)
-                len = utcp->mtu;
-
-            // when FIN is not ack'ed yet len must be at least 1
-            if(len && fin_wanted(c, c->snd.una + len)) {
-                len--;
-                pkt->hdr.ctl |= FIN;
-            }
-
-            buffer_copy(&c->sndbuf, pkt->data, 0, len);
-
-            debug("retransmitting unacked data: %lu\n.", (unsigned long)(sizeof pkt->hdr + len));
-            print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
-
-            if(!utcp_send_packet(c, pkt, sizeof pkt->hdr + len)) {
-                debug("Error: retransmit failed at connection state %p %s\n", c, strstate[c->state]);
-                return false;
-            }
-
-            // advance if sent
-            c->snd.nxt += len;
             break;
 
         case CLOSED:
@@ -911,7 +899,6 @@ static bool retransmit(struct utcp_connection *c) {
             // We shouldn't need to retransmit anything in this state.
             debug("Error: retransmit unexpected connection state %p %s\n", c, strstate[c->state]);
             stop_retransmit_timer(c);
-            free(pkt);
             return false;
     }
 
@@ -921,8 +908,6 @@ static bool retransmit(struct utcp_connection *c) {
     c->rtt_start.tv_sec = 0; // invalidate RTT timer
 
     start_retransmit_timer(c);
-
-    free(pkt);
 
     return true;
 }
