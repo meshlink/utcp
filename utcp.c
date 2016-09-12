@@ -718,7 +718,7 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
     return err;
 }
 
-static ssize_t utcp_buffer(struct utcp_connection *c, const void *data, size_t len) {
+ssize_t utcp_buffer(struct utcp_connection *c, const void *data, size_t len) {
     if(c->reapable) {
         debug("Error: utcp_buffer() called on closed connection %p\n", c);
         errno = EBADF;
