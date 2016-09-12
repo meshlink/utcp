@@ -618,6 +618,14 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
     int32_t left = seqdiff(c->snd.last, c->snd.nxt);
     assert(left >= 0);
 
+    // when there's data to be sent, initialize the timers if not already
+    if(left > 0) {
+        if(!timerisset(&c->rtrx_timeout))
+            start_retransmit_timer(c);
+        if(!timerisset(&c->conn_timeout))
+            start_connection_timer(c);
+    }
+
     // limit by congestion window increased by utcp->mtu on each advance
     int32_t cwndleft = c->snd.cwnd - seqdiff(c->snd.nxt, c->snd.una);
     debug("cwndleft = %d (of %d)\n", cwndleft, c->snd.cwnd);
@@ -763,12 +771,6 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
     // attempt to send the buffered data
     ack(c, false);
-
-    // initialize the timers if not already
-    if(!timerisset(&c->rtrx_timeout))
-        start_retransmit_timer(c);
-    if(!timerisset(&c->conn_timeout))
-        start_connection_timer(c);
 
     return buffered;
 }
@@ -1643,10 +1645,6 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
     c->snd.last++;
 
     ack(c, false);
-    if(!timerisset(&c->rtrx_timeout))
-        start_retransmit_timer(c);
-    if(!timerisset(&c->conn_timeout))
-        start_connection_timer(c);
     return 0;
 }
 
