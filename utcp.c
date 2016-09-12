@@ -841,7 +841,7 @@ static void retransmit(struct utcp_connection *c) {
             debug("retransmitting unacked data: %lu\n.", (unsigned long)(sizeof pkt->hdr + len));
             print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
             if(!utcp_send_packet_or_queue(utcp, pkt, sizeof pkt->hdr + len)) {
-                debug("Error: retransmit failed to send LAST_ACK");
+                debug("Error: retransmit failed at connection state %p %s\n", c, strstate[c->state]);
             }
             break;
 
