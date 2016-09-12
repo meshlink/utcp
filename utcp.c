@@ -817,6 +817,30 @@ static void swap_ports(struct hdr *hdr) {
     hdr->dst = tmp;
 }
 
+static bool send_meta(struct utcp_connection *c, uint32_t seq, uint32_t ack, uint16_t flags) {
+    struct pkt_t *pkt;
+    pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+    if(!pkt)
+        return false;
+
+    pkt->hdr.src = c->src;
+    pkt->hdr.dst = c->dst;
+    pkt->hdr.wnd = c->rcv.wnd;
+    pkt->hdr.aux = 0;
+    pkt->hdr.seq = seq;
+    pkt->hdr.ack = ack;
+    pkt->hdr.ctl = flags;
+
+    print_packet(c->utcp, "send_meta", pkt, sizeof pkt->hdr);
+    if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
+        debug("Error: send_meta failed to send %u", flags);
+        free(pkt);
+        return false;
+    }
+    free(pkt);
+    return true;
+}
+
 static bool retransmit(struct utcp_connection *c) {
     if(c->state == CLOSED || c->snd.last == c->snd.una) {
         debug("Retransmit() called but nothing to retransmit!\n");
@@ -830,50 +854,18 @@ static bool retransmit(struct utcp_connection *c) {
     switch(c->state) {
         case SYN_SENT:
             // Send our SYN again
-            struct pkt_t *pkt;
-            pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
-            if(!pkt)
-                return false;
-
-            pkt->hdr.src = c->src;
-            pkt->hdr.dst = c->dst;
-            pkt->hdr.wnd = c->rcv.wnd;
-            pkt->hdr.aux = 0;
-
-            pkt->hdr.seq = c->snd.iss;
-            pkt->hdr.ack = 0;
-            pkt->hdr.ctl = SYN;
-            print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-            if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
+            if(!send_meta(c, c->snd.iss, 0, SYN)) {
                 debug("Error: retransmit failed to send SYN");
-                free(pkt);
                 return false;
             }
-            free(pkt);
             break;
 
         case SYN_RECEIVED:
             // Send SYNACK again
-            struct pkt_t *pkt;
-            pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
-            if(!pkt)
-                return false;
-
-            pkt->hdr.src = c->src;
-            pkt->hdr.dst = c->dst;
-            pkt->hdr.wnd = c->rcv.wnd;
-            pkt->hdr.aux = 0;
-
-            pkt->hdr.seq = c->snd.nxt;
-            pkt->hdr.ack = c->rcv.nxt;
-            pkt->hdr.ctl = SYN | ACK;
-            print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-            if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
+            if(!send_meta(c, c->snd.nxt, c->rcv.nxt, SYN | ACK)) {
                 debug("Error: retransmit failed to send SYN | ACK");
-                free(pkt);
                 return false;
             }
-            free(pkt);
             break;
 
         case ESTABLISHED:
