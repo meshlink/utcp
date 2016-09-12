@@ -1816,7 +1816,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
             continue;
         }
 
-        // check retransmit timeout
+        // when there's nothing pending queued, check the retransmit timeout
         if(timerisset(&c->rtrx_timeout)) {
             if(timercmp(&c->rtrx_timeout, &now, <)) {
                 debug("retransmit()\n");
