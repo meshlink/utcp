@@ -162,14 +162,18 @@ static void stop_connection_timer(struct utcp_connection *c) {
     debug("connection timeout cleared\n");
 }
 
-static void start_retransmit_timer(struct utcp_connection *c) {
+static void start_retransmit_timer_in(struct utcp_connection *c, uint32_t usec) {
     gettimeofday(&c->rtrx_timeout, NULL);
-    c->rtrx_timeout.tv_usec += c->utcp->rto + c->rtrx_tolerance;
+    c->rtrx_timeout.tv_usec += usec;
     while(c->rtrx_timeout.tv_usec >= USEC_PER_SEC) {
         c->rtrx_timeout.tv_usec -= USEC_PER_SEC;
         c->rtrx_timeout.tv_sec++;
     }
     debug("retransmit timeout set to %lu.%06lu (%u)\n", c->rtrx_timeout.tv_sec, c->rtrx_timeout.tv_usec, c->utcp->rto);
+}
+
+static void start_retransmit_timer(struct utcp_connection *c) {
+    start_retransmit_timer_in(c, c->utcp->rto + c->rtrx_tolerance);
 }
 
 static void stop_retransmit_timer(struct utcp_connection *c) {
@@ -420,6 +424,30 @@ static bool utcp_queue_packet(struct utcp_connection *c, const struct pkt_t *pkt
     entry->len = len;
     list_insert_tail(c->pending_to_send, entry);
 
+    return true;
+}
+
+static bool utcp_send_packet(struct utcp_connection *c, const struct pkt_t *pkt, size_t len) {
+    // attempt to immediately send the packet
+    struct utcp *utcp = c->utcp;
+    ssize_t sent = utcp->send(utcp, pkt, len);
+    if(sent != len) {
+        if(sent > len) {
+            utcp_log_send_error(pkt, len, sent, false);
+        }
+        else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+            // when no data could be sent with possibly the header broken
+            // or when the socket would block
+            utcp_log_send_error(pkt, len, sent, true);
+            return false;
+        }
+        else {
+            // the pkt receiver might have gone offline causing the routing to fail
+            // drop the packet and continue
+            utcp_log_send_error(pkt, len, sent, true);
+            return false;
+        }
+    }
     return true;
 }
 
@@ -789,27 +817,24 @@ static void swap_ports(struct hdr *hdr) {
     hdr->dst = tmp;
 }
 
-static void retransmit(struct utcp_connection *c) {
+static bool retransmit(struct utcp_connection *c) {
     if(c->state == CLOSED || c->snd.last == c->snd.una) {
         debug("Retransmit() called but nothing to retransmit!\n");
         stop_retransmit_timer(c);
-        return;
+        return true;
     }
     debug("retransmit() called\n.");
 
     struct utcp *utcp = c->utcp;
-
     struct pkt_t *pkt;
-
     pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
     if(!pkt)
-        return;
+        return false;
 
     pkt->hdr.src = c->src;
     pkt->hdr.dst = c->dst;
     pkt->hdr.wnd = c->rcv.wnd;
     pkt->hdr.aux = 0;
-
 
     switch(c->state) {
         case SYN_SENT:
@@ -818,8 +843,9 @@ static void retransmit(struct utcp_connection *c) {
             pkt->hdr.ack = 0;
             pkt->hdr.ctl = SYN;
             print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-            if(!utcp_send_packet_or_queue(c, pkt, sizeof pkt->hdr)) {
+            if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
                 debug("Error: retransmit failed to send SYN");
+                return false;
             }
             break;
 
@@ -829,8 +855,9 @@ static void retransmit(struct utcp_connection *c) {
             pkt->hdr.ack = c->rcv.nxt;
             pkt->hdr.ctl = SYN | ACK;
             print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-            if(!utcp_send_packet_or_queue(c, pkt, sizeof pkt->hdr)) {
+            if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
                 debug("Error: retransmit failed to send SYN | ACK");
+                return false;
             }
             break;
 
@@ -839,6 +866,15 @@ static void retransmit(struct utcp_connection *c) {
         case CLOSE_WAIT:
         case CLOSING:
         case LAST_ACK:
+            // reset seqno for the next packet to send
+            c->snd.nxt = c->snd.una;
+
+            // reduce congestion window and slow start threshold on retransmit
+            c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
+            c->snd.cwnd = utcp->mtu;
+            if( c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max )
+                c->snd.cwnd = c->cwnd_max;
+
             // Send unacked data again.
             pkt->hdr.seq = c->snd.una;
             pkt->hdr.ack = c->rcv.nxt;
@@ -853,30 +889,30 @@ static void retransmit(struct utcp_connection *c) {
                 pkt->hdr.ctl |= FIN;
             }
 
-            c->snd.nxt = c->snd.una + len;
-            c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
-            c->snd.cwnd = utcp->mtu; // reduce cwnd on retransmit
-            if( c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max )
-                c->snd.cwnd = c->cwnd_max;
             buffer_copy(&c->sndbuf, pkt->data, 0, len);
+
             debug("retransmitting unacked data: %lu\n.", (unsigned long)(sizeof pkt->hdr + len));
             print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
-            if(!utcp_send_packet_or_queue(c, pkt, sizeof pkt->hdr + len)) {
+
+            if(!utcp_send_packet(c, pkt, sizeof pkt->hdr + len)) {
                 debug("Error: retransmit failed at connection state %p %s\n", c, strstate[c->state]);
+                return false;
             }
+
+            // advance if sent
+            c->snd.nxt += len;
             break;
 
         case CLOSED:
         case LISTEN:
         case TIME_WAIT:
         case FIN_WAIT_2:
+        default:
             // We shouldn't need to retransmit anything in this state.
-#ifdef UTCP_DEBUG
             debug("Error: retransmit unexpected connection state %p %s\n", c, strstate[c->state]);
-            abort();
-#endif
             stop_retransmit_timer(c);
-            goto cleanup;
+            free(pkt);
+            return false;
     }
 
     utcp->rto *= 2;
@@ -886,8 +922,9 @@ static void retransmit(struct utcp_connection *c) {
 
     start_retransmit_timer(c);
 
-cleanup:
     free(pkt);
+
+    return true;
 }
 
 /* Update receive buffer and SACK entries after consuming data.
@@ -1792,7 +1829,10 @@ struct timeval utcp_timeout(struct utcp *utcp) {
         if(timerisset(&c->rtrx_timeout)) {
             if(timercmp(&c->rtrx_timeout, &now, <)) {
                 debug("retransmit()\n");
-                retransmit(c);
+                if(!retransmit(c)) {
+                    // when the retransmit failed, retry in 1ms
+                    start_retransmit_timer_in(c, 1000);
+                }
             }
             if(timercmp(&c->rtrx_timeout, &next, <))
                 next = c->rtrx_timeout;
