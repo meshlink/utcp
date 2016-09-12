@@ -669,15 +669,17 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
 
         left -= seglen;
 
+        // adjust packet data length for the segment length
         // when FIN is not ack'ed yet len must be at least 1
+        size_t datalen = seglen;
         if(seglen && fin_wanted(c, c->snd.nxt + seglen)) {
-            seglen--;
+            datalen--;
             pkt->hdr.ctl |= FIN;
         }
 
-        buffer_copy(&c->sndbuf, pkt->data, bufpos, seglen);
+        buffer_copy(&c->sndbuf, pkt->data, bufpos, datalen);
 
-        size_t pktlen = sizeof pkt->hdr + seglen;
+        size_t pktlen = sizeof pkt->hdr + datalen;
         print_packet(c->utcp, "send", pkt, pktlen);
         ssize_t sent = c->utcp->send(c->utcp, pkt, pktlen);
         if(sent != pktlen) {
@@ -701,14 +703,14 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
             }
         }
 
+        // on successful send, start the RTT measurement if none already in progress
         if(!c->rtt_start.tv_sec) {
-            // Start RTT measurement
             gettimeofday(&c->rtt_start, NULL);
             c->rtt_seq = pkt->hdr.seq + seglen;
             debug("Starting RTT measurement, expecting ack %u\n", c->rtt_seq);
         }
 
-        c->snd.nxt += (pkt->hdr.ctl & FIN)? seglen + 1: seglen;
+        c->snd.nxt += seglen;
 
     } while(left);
 
@@ -743,7 +745,7 @@ static ssize_t utcp_buffer(struct utcp_connection *c, const void *data, size_t l
         errno = EPIPE;
         return UTCP_ERROR;
     }
-    
+
     if(!len)
         return 0;
 
