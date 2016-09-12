@@ -413,7 +413,7 @@ static void utcp_log_send_error(const struct pkt_t *pkt, size_t len, ssize_t sen
     }
 }
 
-static bool utcp_queue_packet(struct utcp_connection *c, const struct pkt_t *pkt, size_t len) {
+static bool utcp_queue_packet(struct utcp_connection *c, struct pkt_t *pkt, size_t len) {
     struct pkt_entry_t *entry = malloc(sizeof *entry);
     if(!entry) {
         debug("Error: out of memory");
@@ -451,7 +451,7 @@ static bool utcp_send_packet(struct utcp_connection *c, const struct pkt_t *pkt,
     return true;
 }
 
-static bool utcp_send_packet_or_queue(struct utcp_connection *c, const struct pkt_t *pkt, size_t len) {
+static bool utcp_send_packet_or_queue(struct utcp_connection *c, struct pkt_t *pkt, size_t len) {
     // when there are already packets queued, just append it to the list to be processed next utcp_timeout
     if(c->pending_to_send->count) {
         return utcp_queue_packet(c, pkt, len);
