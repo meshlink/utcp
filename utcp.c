@@ -1861,9 +1861,13 @@ struct timeval utcp_timeout(struct utcp *utcp) {
         }
     }
 
-    struct timeval diff;
-    timersub(&next, &now, &diff);
-    return diff;
+    if(timercmp(&next, &now, <)) {
+        return (struct timeval){0,0};
+    } else {
+        struct timeval diff;
+        timersub(&next, &now, &diff);
+        return diff;
+    }
 }
 
 bool utcp_is_active(struct utcp *utcp) {
