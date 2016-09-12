@@ -1733,6 +1733,39 @@ int utcp_abort(struct utcp_connection *c) {
     return 0;
 }
 
+// returns whether all could be sent
+static bool utcp_send_queued(struct utcp_connection *c) {
+    struct utcp *utcp = c->utcp;
+    for list_each(struct pkt_entry_t, entry, c->pending_to_send) {
+        if(!entry || !entry->pkt) {
+            list_delete_node(c->pending_to_send, node);
+            continue;
+        }
+
+        ssize_t sent = utcp->send(utcp, entry->pkt, entry->len);
+        if(sent != entry->len) {
+            if(sent > entry->len) {
+                utcp_log_send_error(entry->pkt, entry->len, sent, false);
+            }
+            else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+                // when no data could be sent with possibly the header broken
+                // or when the socket would block, keep queued and retry later
+                utcp_log_send_error(entry->pkt, entry->len, sent, false);
+                return false;
+            }
+            else {
+                // the pkt receiver might have gone offline causing the routing to fail
+                // drop the packet and continue
+                utcp_log_send_error(entry->pkt, entry->len, sent, true);
+                return false;
+            }
+        }
+
+        list_delete_node(c->pending_to_send, node);
+    }
+    return true;
+}
+
 /* Handle timeouts.
  * One call to this function will loop through all connections,
  * checking if something needs to be resent or not.
@@ -1773,33 +1806,12 @@ struct timeval utcp_timeout(struct utcp *utcp) {
         }
 
         // attempt to send packets from pending queue
-        for list_each(struct pkt_entry_t, entry, c->pending_to_send) {
-            if(!entry || !entry->pkt) {
-                list_delete_node(c->pending_to_send, node);
-                continue;
-            }
-
-            ssize_t sent = utcp->send(utcp, entry->pkt, entry->len);
-            if(sent != entry->len) {
-                if(sent > entry->len) {
-                    utcp_log_send_error(entry->pkt, entry->len, sent, false);
-                }
-                else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
-                    // when no data could be sent with possibly the header broken
-                    // or when the socket would block, keep queued and retry later
-                    utcp_log_send_error(entry->pkt, entry->len, sent, false);
-
-                    // return with 1ms timeout
-                    return (struct timeval){0,1000};
-                }
-                else {
-                    // the pkt receiver might have gone offline causing the routing to fail
-                    // drop the packet and continue
-                    utcp_log_send_error(entry->pkt, entry->len, sent, true);
-                }
-            }
-
-            list_delete_node(c->pending_to_send, node);
+        if(!utcp_send_queued(c)) {
+            // retry with 1ms timeout
+            struct timeval retry = {0,1000};
+            if(timercmp(&retry, &next, <))
+                next = retry;
+            continue;
         }
 
         // check retransmit timeout
