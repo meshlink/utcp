@@ -409,7 +409,27 @@ static void utcp_log_send_error(const struct pkt_t *pkt, size_t len, ssize_t sen
     }
 }
 
+static bool utcp_queue_packet(struct utcp *utcp, const struct pkt_t *pkt, size_t len) {
+    struct pkt_entry_t *entry = malloc(sizeof *entry);
+    if(!entry) {
+        debug("Error: out of memory");
+        return false;
+    }
+
+    entry->pkt = pkt;
+    entry->len = len;
+    list_insert_tail(utcp->pending_to_send, entry);
+
+    return true;
+}
+
 static bool utcp_send_packet_or_queue(struct utcp *utcp, const struct pkt_t *pkt, size_t len) {
+    // when there are already packets queued, just append it to the list to be processed next utcp_timeout
+    if(utcp->pending_to_send->count) {
+        return utcp_queue_packet(utcp, pkt, len);
+    }
+
+    // attempt to immediately send the packet and queue if the socket send buffer is full
     ssize_t sent = utcp->send(utcp, pkt, len);
     if(sent != len) {
         if(sent > len) {
@@ -419,22 +439,12 @@ static bool utcp_send_packet_or_queue(struct utcp *utcp, const struct pkt_t *pkt
             // when no data could be sent with possibly the header broken
             // or when the socket would block, queue and retry later
             utcp_log_send_error(pkt, len, sent, false);
-
-            struct pkt_entry_t *entry = malloc(sizeof *entry);
-            if(!entry) {
-                debug("Error: out of memory");
-                return false;
-            }
-
-            entry->pkt = pkt;
-            entry->len = len;
-            list_insert_tail(utcp->pending_to_send, entry);
+            return utcp_queue_packet(utcp, pkt, len);
         }
         else {
             // the pkt receiver might have gone offline causing the routing to fail
             // drop the packet and continue
             utcp_log_send_error(pkt, len, sent, true);
-
             return false;
         }
     }
