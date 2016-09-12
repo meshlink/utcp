@@ -884,7 +884,7 @@ static bool retransmit(struct utcp_connection *c) {
             // reset seqno for the next packet to send
             c->snd.nxt = c->snd.una;
 
-            // reduce congestion window and slow start threshold on retransmit
+            // reduce congestion window and slow start threshold
             c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
             c->snd.cwnd = utcp->mtu;
             if( c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max )
@@ -1823,7 +1823,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
                 next = c->rtrx_timeout;
         }
 
-        // when the connection is established, process new data to be sent
+        // when the connection is established, process all data to be sent
         if(c->state == ESTABLISHED || c->state == CLOSE_WAIT) {
             // when the poll callback is set and there's free buffer left, poll new data to the buffer
             if(buffer_free(&c->sndbuf) && c->poll) {
