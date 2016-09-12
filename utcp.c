@@ -731,33 +731,6 @@ static ssize_t utcp_buffer(struct utcp_connection *c, const void *data, size_t l
 }
 
 ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
-    if(c->reapable) {
-        debug("Error: send() called on closed connection %p\n", c);
-        errno = EBADF;
-        return UTCP_ERROR;
-    }
-
-    switch(c->state) {
-    case CLOSED:
-    case LISTEN:
-    case SYN_SENT:
-    case SYN_RECEIVED:
-        debug("Error: send() called on unconnected connection %p\n", c);
-        errno = ENOTCONN;
-        return UTCP_ERROR;
-    case ESTABLISHED:
-    case CLOSE_WAIT:
-        break;
-    case FIN_WAIT_1:
-    case FIN_WAIT_2:
-    case CLOSING:
-    case LAST_ACK:
-    case TIME_WAIT:
-        debug("Error: send() called on closing connection %p\n", c);
-        errno = EPIPE;
-        return UTCP_ERROR;
-    }
-
     // attempt to add the new data to the send buffer
     ssize_t buffered = utcp_buffer(c, data, len);
 
