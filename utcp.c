@@ -708,6 +708,28 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
     return err;
 }
 
+static ssize_t utcp_buffer(struct utcp_connection *c, const void *data, size_t len) {
+    if(!len)
+        return 0;
+
+    if(!data) {
+        errno = EFAULT;
+        return UTCP_ERROR;
+    }
+
+    // attempt to add the new data to the send buffer
+    ssize_t buffered = buffer_put(&c->sndbuf, data, len);
+    if(buffered <= 0) {
+        errno = EWOULDBLOCK;
+        return UTCP_WOULDBLOCK;
+    }
+
+    // advance upper send buffer position to be sent
+    c->snd.last += buffered;
+
+    return buffered;
+}
+
 ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
     if(c->reapable) {
         debug("Error: send() called on closed connection %p\n", c);
@@ -736,38 +758,19 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
         return UTCP_ERROR;
     }
 
-    if(!len)
-        return 0;
+    // attempt to add the new data to the send buffer
+    ssize_t buffered = utcp_buffer(c, data, len);
 
-    if(!data) {
-        errno = EFAULT;
-        return UTCP_ERROR;
-    }
+    // attempt to send the buffered data
+    ack(c, false);
 
-    // first attempt to free some buffer
-    int ack_err = ack(c, false);
-
-    // attempt to add the new data to the send buffer and break when there's no space left
-    len = buffer_put(&c->sndbuf, data, len);
-    if(len <= 0) {
-        errno = EWOULDBLOCK;
-        return UTCP_WOULDBLOCK;
-    }
-
-    // advance upper send buffer position to be sent
-    c->snd.last += len;
-
-    // when the ack above passed call it again with the new buffered data
-    if(!ack_err)
-        ack(c, false);
-
-    // if not set already initialize the timers
+    // initialize the timers if not already
     if(!timerisset(&c->rtrx_timeout))
         start_retransmit_timer(c);
     if(!timerisset(&c->conn_timeout))
         start_connection_timer(c);
 
-    return len;
+    return buffered;
 }
 
 static void swap_ports(struct hdr *hdr) {
@@ -1790,10 +1793,19 @@ struct timeval utcp_timeout(struct utcp *utcp) {
                 next = c->rtrx_timeout;
         }
 
-        if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT)) {
-            int err = c->poll(c, buffer_free(&c->sndbuf));
-            if(err || c->sndbuf.used ) {
-                // return with 1ms timeout as there's more to send
+        // when the connection is established, process new data to be sent
+        if(c->state == ESTABLISHED || c->state == CLOSE_WAIT) {
+            // when the buffer is exhausted, just attempt to send the buffered data
+            if(!buffer_free(&c->sndbuf)) {
+                ack(c, false);
+            }
+            // otherwise when the poll callback is set poll new data to be sent
+            else if(c->poll) {
+                c->poll(c, buffer_free(&c->sndbuf));
+            }
+
+            // when after the poll there's still data left in the buffer, return with a 1ms timeout
+            if(c->sndbuf.used) {
                 return (struct timeval){0,1000};
             }
         }
