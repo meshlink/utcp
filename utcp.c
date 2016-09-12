@@ -612,21 +612,19 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
     c->recv = recv;
     c->priv = priv;
 
-    struct hdr hdr;
-
-    hdr.src = c->src;
-    hdr.dst = c->dst;
-    hdr.seq = c->snd.iss;
-    hdr.ack = 0;
-    hdr.wnd = c->rcv.wnd;
-    hdr.ctl = SYN;
-    hdr.aux = 0;
+    struct pkt_t *pkt = calloc(1, sizeof(struct pkt_t));
+    pkt->hdr.src = c->src;
+    pkt->hdr.dst = c->dst;
+    pkt->hdr.seq = c->snd.iss;
+    pkt->hdr.wnd = c->rcv.wnd;
+    pkt->hdr.ctl = SYN;
 
     set_state(c, SYN_SENT);
 
-    print_packet(utcp, "send", &hdr, sizeof hdr);
-    if(!utcp_send_packet_or_queue(c, &hdr, sizeof hdr)) {
+    print_packet(utcp, "send", pkt, sizeof pkt->hdr);
+    if(!utcp_send_packet_or_queue(c, pkt, sizeof pkt->hdr)) {
         debug("Error: utcp_connect failed to send SYN");
+        free(pkt);
         abort();
     }
 
@@ -1113,14 +1111,16 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             c->rcv.nxt = c->rcv.irs + 1;
             set_state(c, SYN_RECEIVED);
 
-            hdr.dst = c->dst;
-            hdr.src = c->src;
-            hdr.ack = c->rcv.irs + 1;
-            hdr.seq = c->snd.iss;
-            hdr.ctl = SYN | ACK;
-            print_packet(c->utcp, "send", &hdr, sizeof hdr);
-            if(!utcp_send_packet_or_queue(c, &hdr, sizeof hdr)) {
+            struct pkt_t *response = calloc(1, sizeof(struct pkt_t));;
+            response->hdr.dst = c->dst;
+            response->hdr.src = c->src;
+            response->hdr.ack = c->rcv.irs + 1;
+            response->hdr.seq = c->snd.iss;
+            response->hdr.ctl = SYN | ACK;
+            print_packet(c->utcp, "send", response, sizeof response->hdr);
+            if(!utcp_send_packet_or_queue(c, response, sizeof response->hdr)) {
                 debug("Error: utcp_recv failed to send SYN | ACK");
+                free(response);
             }
         } else {
             // No, we don't want your packets, send a RST back
@@ -1240,8 +1240,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             }
 
             // Also advance snd.nxt if possible
-            if(seqdiff(c->snd.nxt, hdr.ack) < 0)
-                c->snd.nxt = hdr.ack;
+            if(seqdiff(c->snd.nxt, pkt->hdr.ack) < 0)
+                c->snd.nxt = pkt->hdr.ack;
 
             c->snd.una = pkt->hdr.ack;
             c->dupack = 0;
@@ -1589,22 +1589,27 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     return 0;
 
 reset:
-    swap_ports(&hdr);
-    hdr.wnd = 0;
-    if(hdr.ctl & ACK) {
-        hdr.seq = hdr.ack;
-        hdr.ctl = RST;
-    } else {
-        hdr.ack = hdr.seq + len;
-        hdr.seq = 0;
-        hdr.ctl = RST | ACK;
-    }
-    print_packet(utcp, "send", &hdr, sizeof hdr);
-    if(!utcp_send_packet_or_queue(c, &hdr, sizeof hdr)) {
-        debug("Error: utcp_recv failed to send RST");
-    }
-    return 0;
+    {
+        struct pkt_t *response = malloc(sizeof(struct pkt_t));
+        memcpy(&response->hdr, &pkt->hdr, sizeof pkt->hdr);
 
+        swap_ports(&response->hdr);
+        response->hdr.wnd = 0;
+        if(response->hdr.ctl & ACK) {
+            response->hdr.seq = response->hdr.ack;
+            response->hdr.ctl = RST;
+        } else {
+            response->hdr.ack = response->hdr.seq + len;
+            response->hdr.seq = 0;
+            response->hdr.ctl = RST | ACK;
+        }
+        print_packet(utcp, "send", response, sizeof response->hdr);
+        if(!utcp_send_packet_or_queue(c, response, sizeof response->hdr)) {
+            debug("Error: utcp_recv failed to send RST");
+            free(response);
+        }
+        return 0;
+    }
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
@@ -1715,18 +1720,16 @@ int utcp_abort(struct utcp_connection *c) {
 
     // Send RST
 
-    struct hdr hdr;
+    struct pkt_t *pkt = calloc(1, sizeof(struct pkt_t));
+    pkt->hdr.src = c->src;
+    pkt->hdr.dst = c->dst;
+    pkt->hdr.seq = c->snd.nxt;
+    pkt->hdr.ctl = RST;
 
-    hdr.src = c->src;
-    hdr.dst = c->dst;
-    hdr.seq = c->snd.nxt;
-    hdr.ack = 0;
-    hdr.wnd = 0;
-    hdr.ctl = RST;
-
-    print_packet(c->utcp, "send", &hdr, sizeof hdr);
-    if(!utcp_send_packet_or_queue(c, &hdr, sizeof hdr)) {
+    print_packet(c->utcp, "send", pkt, sizeof pkt->hdr);
+    if(!utcp_send_packet_or_queue(c, pkt, sizeof pkt->hdr)) {
         debug("Error: utcp_abort failed to send RST");
+        free(pkt);
     }
     return 0;
 }
