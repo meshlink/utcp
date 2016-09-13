@@ -872,7 +872,7 @@ static bool send_meta(struct utcp_connection *c, uint32_t seq, uint32_t ack, uin
 
     pkt->hdr.src = c->src;
     pkt->hdr.dst = c->dst;
-    pkt->hdr.trs = ++c->snd.trs;
+    pkt->hdr.trs = c->snd.trs;
     pkt->hdr.tra = c->rcv.trs;
     pkt->hdr.wnd = c->rcv.wnd;
     pkt->hdr.aux = 0;
@@ -899,6 +899,9 @@ static bool retransmit(struct utcp_connection *c) {
     debug("retransmit() called\n.");
 
     struct utcp *utcp = c->utcp;
+
+    // increment transmit number
+    ++c->snd.trs;
 
     switch(c->state) {
         case SYN_SENT:
