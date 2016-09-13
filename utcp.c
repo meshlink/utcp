@@ -29,6 +29,7 @@
 #include <sys/time.h>
 
 #include "utcp_priv.h"
+#include "list.h"
 
 #ifndef EBADMSG
 #define EBADMSG         104
@@ -144,6 +145,14 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 #define print_packet(...)
 #endif
 
+static void free_pkt_entry(struct pkt_entry_t *entry) {
+    if(entry) {
+        if(entry->pkt)
+            free(entry->pkt);
+        free(entry);
+    }
+}
+
 static void start_connection_timer(struct utcp_connection *c) {
     gettimeofday(&c->conn_timeout, NULL);
     c->conn_timeout.tv_sec += c->utcp->timeout;
@@ -155,14 +164,18 @@ static void stop_connection_timer(struct utcp_connection *c) {
     debug("connection timeout cleared\n");
 }
 
-static void start_retransmit_timer(struct utcp_connection *c) {
+static void start_retransmit_timer_in(struct utcp_connection *c, uint32_t usec) {
     gettimeofday(&c->rtrx_timeout, NULL);
-    c->rtrx_timeout.tv_usec += c->utcp->rto + c->rtrx_tolerance;
+    c->rtrx_timeout.tv_usec += usec;
     while(c->rtrx_timeout.tv_usec >= USEC_PER_SEC) {
         c->rtrx_timeout.tv_usec -= USEC_PER_SEC;
         c->rtrx_timeout.tv_sec++;
     }
     debug("retransmit timeout set to %lu.%06lu (%u)\n", c->rtrx_timeout.tv_sec, c->rtrx_timeout.tv_usec, c->utcp->rto);
+}
+
+static void start_retransmit_timer(struct utcp_connection *c) {
+    start_retransmit_timer_in(c, c->utcp->rto + c->rtrx_tolerance);
 }
 
 static void stop_retransmit_timer(struct utcp_connection *c) {
@@ -379,6 +392,129 @@ uint32_t buffer_free(const struct buffer *buf) {
     return buf->maxsize - buf->used;
 }
 
+static void utcp_log_send_error(const struct pkt_t *pkt, size_t len, ssize_t sent, bool drop) {
+    if(sent != len) {
+        if(sent > len) {
+            debug("Error: sent packet %u and ack %u but with a larger size than it should, %u of %u bytes sent", pkt->hdr.seq, pkt->hdr.ack, sent, len);
+        }
+        else if(sent >= 0) {
+            // we do not handle split packets
+            debug("Warning: failed to send packet %u and ack %u with only %u of %u bytes packet size sent, %s", pkt->hdr.seq, pkt->hdr.ack, sent, len, drop? "dropping the packet" : "retrying it later");
+        }
+        else if(sent == UTCP_WOULDBLOCK) {
+            debug("Debug: failed to send packet %u and ack %u with UTCP_WOULDBLOCK, %s", pkt->hdr.seq, pkt->hdr.ack, drop? "dropping the packet" : "retrying it later");
+        }
+        else {
+            // the pkt receiver might have gone offline causing the routing to fail
+            // drop the packet and continue
+            debug("Error: failed to send packet %u and ack %u with error %u, %s", pkt->hdr.seq, pkt->hdr.ack, sent, drop? "dropping the packet" : "retrying it later");
+        }
+    }
+    else if(drop) {
+        debug("Error: failed to send packet %u and ack %u, dropping the packet [sent=%u]", pkt->hdr.seq, pkt->hdr.ack, sent);
+    }
+}
+
+static bool utcp_queue_packet(struct utcp_connection *c, struct pkt_t *pkt, size_t len) {
+    struct pkt_entry_t *entry = malloc(sizeof *entry);
+    if(!entry) {
+        debug("Error: out of memory");
+        return false;
+    }
+
+    entry->pkt = pkt;
+    entry->len = len;
+    list_insert_tail(c->pending_to_send, entry);
+
+    return true;
+}
+
+static bool utcp_send_packet(struct utcp_connection *c, const struct pkt_t *pkt, size_t len) {
+    // attempt to immediately send the packet
+    struct utcp *utcp = c->utcp;
+    ssize_t sent = utcp->send(utcp, pkt, len);
+    if(sent != len) {
+        if(sent > len) {
+            utcp_log_send_error(pkt, len, sent, false);
+        }
+        else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+            // when no data could be sent with possibly the header broken
+            // or when the socket would block
+            utcp_log_send_error(pkt, len, sent, true);
+            return false;
+        }
+        else {
+            // the pkt receiver might have gone offline causing the routing to fail
+            // drop the packet and continue
+            utcp_log_send_error(pkt, len, sent, true);
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool utcp_send_packet_or_queue(struct utcp_connection *c, struct pkt_t *pkt, size_t len) {
+    // when there are already packets queued, just append it to the list to be processed next utcp_timeout
+    if(c->pending_to_send->count) {
+        return utcp_queue_packet(c, pkt, len);
+    }
+
+    // attempt to immediately send the packet and queue if the socket send buffer is full
+    struct utcp *utcp = c->utcp;
+    ssize_t sent = utcp->send(utcp, pkt, len);
+    if(sent != len) {
+        if(sent > len) {
+            utcp_log_send_error(pkt, len, sent, false);
+        }
+        else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+            // when no data could be sent with possibly the header broken
+            // or when the socket would block, queue and retry later
+            utcp_log_send_error(pkt, len, sent, false);
+            return utcp_queue_packet(c, pkt, len);
+        }
+        else {
+            // the pkt receiver might have gone offline causing the routing to fail
+            // drop the packet and continue
+            utcp_log_send_error(pkt, len, sent, true);
+            return false;
+        }
+    }
+    return true;
+}
+
+// returns whether all could be sent
+static bool utcp_send_queued(struct utcp_connection *c) {
+    struct utcp *utcp = c->utcp;
+    for list_each(struct pkt_entry_t, entry, c->pending_to_send) {
+        if(!entry || !entry->pkt) {
+            list_delete_node(c->pending_to_send, node);
+            continue;
+        }
+
+        ssize_t sent = utcp->send(utcp, entry->pkt, entry->len);
+        if(sent != entry->len) {
+            if(sent > entry->len) {
+                utcp_log_send_error(entry->pkt, entry->len, sent, false);
+            }
+            else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+                // when no data could be sent with possibly the header broken
+                // or when the socket would block, keep queued and retry later
+                utcp_log_send_error(entry->pkt, entry->len, sent, false);
+                return false;
+            }
+            else {
+                // the pkt receiver might have gone offline causing the routing to fail
+                // drop the packet and continue
+                utcp_log_send_error(entry->pkt, entry->len, sent, true);
+                return false;
+            }
+        }
+
+        list_delete_node(c->pending_to_send, node);
+    }
+    return true;
+}
+
 
 // Connections are stored in a sorted list.
 // This gives O(log(N)) lookup time, O(N log(N)) insertion time and O(N) deletion time.
@@ -419,6 +555,9 @@ static void free_connection(struct utcp_connection *c) {
     int i = cp - utcp->connections;
     memmove(cp, cp + 1, (utcp->nconnections - i - 1) * sizeof *cp);
     utcp->nconnections--;
+
+    if(c->pending_to_send)
+        list_delete_list(c->pending_to_send);
 
     buffer_exit(&c->rcvbuf);
     buffer_exit(&c->sndbuf);
@@ -471,6 +610,8 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
         return NULL;
     }
 
+    c->pending_to_send = list_alloc((list_action_t)free_pkt_entry);
+
     // Fill in the details
 
     c->src = src;
@@ -506,23 +647,19 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
     c->recv = recv;
     c->priv = priv;
 
-    struct hdr hdr;
-
-    hdr.src = c->src;
-    hdr.dst = c->dst;
-    hdr.seq = c->snd.iss;
-    hdr.ack = 0;
-    hdr.trs = 0;
-    hdr.tra = 0;
-    hdr.wnd = c->rcv.wnd;
-    hdr.ctl = SYN;
-    hdr.aux = 0;
+    struct pkt_t *pkt = calloc(1, sizeof(struct pkt_t));
+    pkt->hdr.src = c->src;
+    pkt->hdr.dst = c->dst;
+    pkt->hdr.seq = c->snd.iss;
+    pkt->hdr.wnd = c->rcv.wnd;
+    pkt->hdr.ctl = SYN;
 
     set_state(c, SYN_SENT);
 
-    print_packet(utcp, "send", &hdr, sizeof hdr);
-    if(utcp->send(utcp, &hdr, sizeof hdr) != sizeof hdr) {
+    print_packet(utcp, "send", pkt, sizeof pkt->hdr);
+    if(!utcp_send_packet_or_queue(c, pkt, sizeof pkt->hdr)) {
         debug("Error: utcp_connect failed to send SYN");
+        free(pkt);
         free_connection(c);
         return NULL;
     }
@@ -545,7 +682,16 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
     set_state(c, ESTABLISHED);
 }
 
-static void ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) {
+static int ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) {
+    if(sendatleastone) {
+        c->sendatleastone = true;
+    }
+
+    // attempt to send packets from pending queue
+    if(!utcp_send_queued(c)) {
+        return UTCP_WOULDBLOCK;
+    }
+
     int32_t left = seqdiff(c->snd.last, c->snd.nxt);
     assert(left >= 0);
 
@@ -559,24 +705,23 @@ static void ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) 
         left = cwndleft;
 
     // If we don't need to send an ACK...
-    if(!sendatleastone) {
+    if(!c->sendatleastone) {
         // then don't if we don't have any new data,
         if(!left)
-            return;
+            return 0;
 
         // and avoid sending small packets.
         if(left < c->utcp->mtu && seqdiff(c->snd.last, c->snd.una) >= c->utcp->mtu)
-            return;
+            return 0;
     }
 
-    struct {
-        struct hdr hdr;
-        char data[];
-    } *pkt;
+    struct pkt_t *pkt;
 
     pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
-    if(!pkt)
-        return;
+    if(!pkt) {
+        debug("Error: out of memory");
+        return UTCP_ERROR;
+    }
 
     pkt->hdr.src = c->src;
     pkt->hdr.dst = c->dst;
@@ -587,6 +732,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) 
     pkt->hdr.ctl = ACK | flags;
     pkt->hdr.aux = 0;
 
+    int err = 0;
     do {
         uint32_t seglen = left > c->utcp->mtu ? c->utcp->mtu : left;
         uint32_t bufpos = seqdiff(c->snd.nxt, c->snd.una);
@@ -594,41 +740,70 @@ static void ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) 
 
         left -= seglen;
 
+        // adjust packet data length for the segment length
         // when FIN is not ack'ed yet len must be at least 1
+        size_t datalen = seglen;
         if(seglen && fin_wanted(c, c->snd.nxt + seglen)) {
-            seglen--;
+            datalen--;
             pkt->hdr.ctl |= FIN;
         }
 
-        buffer_copy(&c->sndbuf, pkt->data, bufpos, seglen);
+        buffer_copy(&c->sndbuf, pkt->data, bufpos, datalen);
 
-        size_t pktlen = sizeof pkt->hdr + seglen;
+        size_t pktlen = sizeof pkt->hdr + datalen;
         print_packet(c->utcp, "send", pkt, pktlen);
-        if(c->utcp->send(c->utcp, pkt, pktlen) != pktlen) {
-            debug("Error: utcp ack() failed to send pkt %u with ack %u", pkt->hdr.seq, pkt->hdr.ack);
-            // break loop and hope to recover so time later
-            break;
+        ssize_t sent = c->utcp->send(c->utcp, pkt, pktlen);
+        if(sent != pktlen) {
+            if(sent > pktlen) {
+                utcp_log_send_error(pkt, pktlen, sent, false);
+            }
+            else if(sent >= 0 || sent == UTCP_WOULDBLOCK) {
+                // when no data could be sent with possibly the header broken
+                // or when the socket would block, don't advance but retry later
+                utcp_log_send_error(pkt, pktlen, sent, false);
+                err = UTCP_WOULDBLOCK;
+                break;
+            }
+            else {
+                // the pkt receiver might have gone offline causing the routing to fail
+                // break loop and hope to recover some time later
+                // it would only cause a retransmit when skipped
+                utcp_log_send_error(pkt, pktlen, sent, false);
+                err = UTCP_ERROR;
+                break;
+            }
         }
 
+        // if anything sent, andvance
+        c->snd.nxt += seglen;
+        c->sendatleastone = false;
+
+        // on outgoing progess, initialize the timers if not already
+        if(seglen > 0) {
+            if(!timerisset(&c->rtrx_timeout))
+                start_retransmit_timer(c);
+            if(!timerisset(&c->conn_timeout))
+                start_connection_timer(c);
+        }
+
+        // on successful send, start the RTT measurement if none already in progress
         if(!c->rtt_start.tv_sec) {
-            // Start RTT measurement
             gettimeofday(&c->rtt_start, NULL);
             c->rtt_seq = pkt->hdr.seq + seglen;
             debug("Starting RTT measurement, expecting ack %u\n", c->rtt_seq);
         }
 
-        c->snd.nxt += (pkt->hdr.ctl & FIN)? seglen + 1: seglen;
-
     } while(left);
 
     free(pkt);
+    return err;
 }
 
-ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
+ssize_t utcp_buffer(struct utcp_connection *c, const void *data, size_t len) {
     if(c->reapable) {
-        debug("Error: send() called on closed connection %p\n", c);
+        debug("Error: utcp_buffer() called on closed connection %p\n", c);
         errno = EBADF;
-        return -1;
+        return UTCP_ERROR;
     }
 
     switch(c->state) {
@@ -636,9 +811,9 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
     case LISTEN:
     case SYN_SENT:
     case SYN_RECEIVED:
-        debug("Error: send() called on unconnected connection %p\n", c);
+        debug("Error: utcp_buffer() called on unconnected connection %p\n", c);
         errno = ENOTCONN;
-        return -1;
+        return UTCP_ERROR;
     case ESTABLISHED:
     case CLOSE_WAIT:
         break;
@@ -647,35 +822,40 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
     case CLOSING:
     case LAST_ACK:
     case TIME_WAIT:
-        debug("Error: send() called on closing connection %p\n", c);
+        debug("Error: utcp_buffer() called on closing connection %p\n", c);
         errno = EPIPE;
-        return -1;
+        return UTCP_ERROR;
     }
-
-    // Add data to send buffer
 
     if(!len)
         return 0;
 
     if(!data) {
         errno = EFAULT;
-        return -1;
+        return UTCP_ERROR;
     }
 
-    len = buffer_put(&c->sndbuf, data, len);
-    if(len <= 0) {
+    // attempt to add the new data to the send buffer
+    ssize_t buffered = buffer_put(&c->sndbuf, data, len);
+    if(buffered <= 0) {
         errno = EWOULDBLOCK;
-        return 0;
+        return UTCP_WOULDBLOCK;
     }
 
-    c->snd.last += len;
+    // advance upper send buffer position to be sent
+    c->snd.last += buffered;
 
+    return buffered;
+}
+
+ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
+    // attempt to add the new data to the send buffer
+    ssize_t buffered = utcp_buffer(c, data, len);
+
+    // attempt to send the buffered data
     ack(c, false, 0);
-    if(!timerisset(&c->rtrx_timeout))
-        start_retransmit_timer(c);
-    if(!timerisset(&c->conn_timeout))
-        start_connection_timer(c);
-    return len;
+
+    return buffered;
 }
 
 static void swap_ports(struct hdr *hdr) {
@@ -684,53 +864,59 @@ static void swap_ports(struct hdr *hdr) {
     hdr->dst = tmp;
 }
 
-static void retransmit(struct utcp_connection *c) {
+static bool send_meta(struct utcp_connection *c, uint32_t seq, uint32_t ack, uint16_t flags) {
+    struct pkt_t *pkt;
+    pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+    if(!pkt)
+        return false;
+
+    pkt->hdr.src = c->src;
+    pkt->hdr.dst = c->dst;
+    pkt->hdr.trs = c->snd.trs;
+    pkt->hdr.tra = c->rcv.trs;
+    pkt->hdr.wnd = c->rcv.wnd;
+    pkt->hdr.aux = 0;
+    pkt->hdr.seq = seq;
+    pkt->hdr.ack = ack;
+    pkt->hdr.ctl = flags;
+
+    print_packet(c->utcp, "send_meta", pkt, sizeof pkt->hdr);
+    if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
+        debug("Error: send_meta failed to send %u", flags);
+        free(pkt);
+        return false;
+    }
+    free(pkt);
+    return true;
+}
+
+static bool retransmit(struct utcp_connection *c) {
     if(c->state == CLOSED || c->snd.last == c->snd.una) {
         debug("Retransmit() called but nothing to retransmit!\n");
         stop_retransmit_timer(c);
-        return;
+        return true;
     }
     debug("retransmit() called\n.");
 
     struct utcp *utcp = c->utcp;
 
-    struct {
-        struct hdr hdr;
-        char data[];
-    } *pkt;
-
-    pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
-    if(!pkt)
-        return;
-
-    pkt->hdr.src = c->src;
-    pkt->hdr.dst = c->dst;
-    pkt->hdr.trs = ++c->snd.trs;
-    pkt->hdr.tra = c->rcv.trs;
-    pkt->hdr.wnd = c->rcv.wnd;
-    pkt->hdr.aux = 0;
-
+    // increment transmit number
+    ++c->snd.trs;
 
     switch(c->state) {
         case SYN_SENT:
             // Send our SYN again
-            pkt->hdr.seq = c->snd.iss;
-            pkt->hdr.ack = 0;
-            pkt->hdr.ctl = SYN;
-            print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-            if(utcp->send(utcp, pkt, sizeof pkt->hdr) != sizeof pkt->hdr) {
+            if(!send_meta(c, c->snd.iss, 0, SYN)) {
                 debug("Error: retransmit failed to send SYN");
+                return false;
             }
             break;
 
         case SYN_RECEIVED:
             // Send SYNACK again
-            pkt->hdr.seq = c->snd.nxt;
-            pkt->hdr.ack = c->rcv.nxt;
-            pkt->hdr.ctl = SYN | ACK;
-            print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-            if(utcp->send(utcp, pkt, sizeof pkt->hdr) != sizeof pkt->hdr) {
+            if(!send_meta(c, c->snd.nxt, c->rcv.nxt, SYN | ACK)) {
                 debug("Error: retransmit failed to send SYN | ACK");
+                return false;
             }
             break;
 
@@ -739,46 +925,25 @@ static void retransmit(struct utcp_connection *c) {
         case CLOSE_WAIT:
         case CLOSING:
         case LAST_ACK:
-            // Send unacked data again.
-            pkt->hdr.seq = c->snd.una;
-            pkt->hdr.ack = c->rcv.nxt;
-            pkt->hdr.ctl = ACK;
-            uint32_t len = seqdiff(c->snd.last, c->snd.una);
-            if(len > utcp->mtu)
-                len = utcp->mtu;
+            // reset seqno for the next packet to send
+            c->snd.nxt = c->snd.una;
 
-            // when FIN is not ack'ed yet len must be at least 1
-            if(len && fin_wanted(c, c->snd.una + len)) {
-                len--;
-                pkt->hdr.ctl |= FIN;
-            }
-
-            c->snd.nxt = c->snd.una + len;
+            // reduce congestion window and slow start threshold
             c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
-            c->snd.cwnd = utcp->mtu; // reduce cwnd on retransmit
+            c->snd.cwnd = utcp->mtu;
             if( c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max )
                 c->snd.cwnd = c->cwnd_max;
-            buffer_copy(&c->sndbuf, pkt->data, 0, len);
-
-            size_t pktlen = sizeof pkt->hdr + len;
-            debug("retransmitting unacked data: %lu\n.", (unsigned long)(pktlen));
-            print_packet(c->utcp, "rtrx", pkt, pktlen);
-            if(utcp->send(utcp, pkt, pktlen) != pktlen) {
-                debug("Error: retransmit failed to send LAST_ACK");
-            }
             break;
 
         case CLOSED:
         case LISTEN:
         case TIME_WAIT:
         case FIN_WAIT_2:
+        default:
             // We shouldn't need to retransmit anything in this state.
-#ifdef UTCP_DEBUG
             debug("Error: retransmit unexpected connection state %p %s\n", c, strstate[c->state]);
-            abort();
-#endif
             stop_retransmit_timer(c);
-            goto cleanup;
+            return false;
     }
 
     utcp->rto *= 2;
@@ -788,8 +953,7 @@ static void retransmit(struct utcp_connection *c) {
 
     start_retransmit_timer(c);
 
-cleanup:
-    free(pkt);
+    return true;
 }
 
 /* Update receive buffer and SACK entries after consuming data.
@@ -911,12 +1075,7 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
     }
 
     if(c->recv) {
-        ssize_t rxd = c->recv(c, data, len);
-        if(rxd != len) {
-            // TODO: handle the application not accepting all data.
-            debug("Error: handle_in_order rxd:%ld != len:%lu\n", (long)rxd, (unsigned long)len);
-            abort();
-        }
+        c->recv(c, data, len);
     }
 
     if(c->rcvbuf.used)
@@ -955,70 +1114,70 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // Drop packets smaller than the header
 
-    struct hdr hdr;
-    if(len < sizeof hdr) {
+    if(len < sizeof(struct hdr)) {
         errno = EBADMSG;
         return -1;
     }
 
-    // Make a copy from the potentially unaligned data to a struct hdr
+    // Reinterpret potentially unaligned data to a pkt_t struct
 
-    memcpy(&hdr, data, sizeof hdr);
-    data += sizeof hdr;
-    len -= sizeof hdr;
+    const struct pkt_t *pkt = data;
+    len -= sizeof(struct hdr);
 
     // Drop packets with an unknown CTL flag
 
-    if(hdr.ctl & ~(SYN | ACK | RST | FIN)) {
+    if(pkt->hdr.ctl & ~(SYN | ACK | RST | FIN)) {
         errno = EBADMSG;
         return -1;
     }
 
     // Try to match the packet to an existing connection
 
-    struct utcp_connection *c = find_connection(utcp, hdr.dst, hdr.src);
+    struct utcp_connection *c = find_connection(utcp, pkt->hdr.dst, pkt->hdr.src);
 
     // Is it for a new connection?
 
     if(!c) {
         // Ignore RST packets
 
-        if(hdr.ctl & RST)
+        if(pkt->hdr.ctl & RST)
             return 0;
 
         // Is it a SYN packet and are we LISTENing?
 
-        if(hdr.ctl & SYN && !(hdr.ctl & ACK) && utcp->accept) {
+        if(pkt->hdr.ctl & SYN && !(pkt->hdr.ctl & ACK) && utcp->accept) {
             // If we don't want to accept it, send a RST back
-            if((utcp->pre_accept && !utcp->pre_accept(utcp, hdr.dst))) {
+            if((utcp->pre_accept && !utcp->pre_accept(utcp, pkt->hdr.dst))) {
                 len = 1;
                 goto reset;
             }
 
             // Try to allocate memory, otherwise send a RST back
-            c = allocate_connection(utcp, hdr.dst, hdr.src);
+            c = allocate_connection(utcp, pkt->hdr.dst, pkt->hdr.src);
             if(!c) {
                 len = 1;
                 goto reset;
             }
 
             // Return SYN+ACK, go to SYN_RECEIVED state
-            c->snd.wnd = hdr.wnd;
-            c->rcv.irs = hdr.seq;
+            c->snd.wnd = pkt->hdr.wnd;
+            c->rcv.irs = pkt->hdr.seq;
             c->rcv.nxt = c->rcv.irs + 1;
-            c->rcv.trs = hdr.trs;
+            c->rcv.trs = pkt->hdr.trs;
             set_state(c, SYN_RECEIVED);
 
-            hdr.src = c->src;
-            hdr.dst = c->dst;
-            hdr.seq = c->snd.iss;
-            hdr.ack = c->rcv.irs + 1;
-            hdr.trs = c->snd.trs;
-            hdr.tra = c->rcv.trs;
-            hdr.ctl = SYN | ACK;
-            print_packet(c->utcp, "send", &hdr, sizeof hdr);
-            if(utcp->send(utcp, &hdr, sizeof hdr) != sizeof hdr) {
+            struct pkt_t *response = calloc(1, sizeof(struct pkt_t));;
+            response->hdr.dst = c->dst;
+            response->hdr.src = c->src;
+            response->hdr.ack = c->rcv.irs + 1;
+            response->hdr.seq = c->snd.iss;
+            response->hdr.trs = c->snd.trs;
+            response->hdr.tra = c->rcv.trs;
+            response->hdr.ctl = SYN | ACK;
+            print_packet(c->utcp, "send", response, sizeof response->hdr);
+            if(!utcp_send_packet_or_queue(c, response, sizeof response->hdr)) {
                 debug("Error: utcp_recv failed to send SYN | ACK");
+                free(response);
             }
         } else {
             // No, we don't want your packets, send a RST back
@@ -1069,11 +1228,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // But it might be bigger than snd.nxt since we reset snd.nxt in retransmit and on triplicate ack.
     // And by package reordering it might be lower than snd.una, still it might have some useful data.
 
-    if((hdr.ctl & ACK) && (seqdiff(hdr.ack, c->snd.last) > 0)) {
+    if((pkt->hdr.ctl & ACK) && (seqdiff(pkt->hdr.ack, c->snd.last) > 0)) {
         debug("Packet ack seqno out of range: hdr.ack=%u snd.una=%u snd.nxt=%u snd.last=%u\n",
-            hdr.ack, c->snd.una, c->snd.nxt, c->snd.last);
+            pkt->hdr.ack, c->snd.una, c->snd.nxt, c->snd.last);
         // Ignore unacceptable RST packets.
-        if(hdr.ctl & RST)
+        if(pkt->hdr.ctl & RST)
             return 0;
         goto reset;
     }
@@ -1082,11 +1241,11 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // 2a. Update received transmit number
 
-    c->rcv.trs = hdr.trs;
+    c->rcv.trs = pkt->hdr.trs;
 
     // 2b. Update send window
 
-    c->snd.wnd = hdr.wnd;
+    c->snd.wnd = pkt->hdr.wnd;
 
     // 2c. Advance acknowledged progress
     // process acks even when hdr.seq doesn't match to adapt early and
@@ -1095,24 +1254,24 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     uint32_t prevrcvnxt = c->rcv.nxt;
     uint32_t advanced = 0;
 
-    if(hdr.ctl & ACK)
+    if(pkt->hdr.ctl & ACK)
     {
-        int32_t progress = seqdiff(hdr.ack, c->snd.una);
+        int32_t progress = seqdiff(pkt->hdr.ack, c->snd.una);
         advanced = (progress > 0)? progress: 0;
 
         if(advanced) {
             // RTT measurement
             // check the measurement was started and the transmit number matches the last retransmit
-            if(c->rtt_start.tv_sec && hdr.tra == c->snd.trs) {
+            if(c->rtt_start.tv_sec && pkt->hdr.tra == c->snd.trs) {
                 // check the acknowledged sequence number matches the sequence number of last RTT measurement sent
-                if(c->rtt_seq == hdr.ack) {
+                if(c->rtt_seq == pkt->hdr.ack) {
                     struct timeval now, diff;
                     gettimeofday(&now, NULL);
                     timersub(&now, &c->rtt_start, &diff);
                     update_rtt(c, diff.tv_sec * USEC_PER_SEC + diff.tv_usec);
                     c->rtt_start.tv_sec = 0;
-                } else if(c->rtt_seq < hdr.ack) {
-                    debug("Cancelling RTT measurement: %u < %u\n", c->rtt_seq, hdr.ack);
+                } else if(c->rtt_seq < pkt->hdr.ack) {
+                    debug("Cancelling RTT measurement: %u < %u\n", c->rtt_seq, pkt->hdr.ack);
                     c->rtt_start.tv_sec = 0;
                 }
             }
@@ -1129,7 +1288,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                 case CLOSING:
                 case LAST_ACK:
                     // last ack is the FIN
-                    if(hdr.ack == c->snd.last)
+                    if(pkt->hdr.ack == c->snd.last)
                         data_acked--;
                     break;
                 default:
@@ -1147,9 +1306,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             }
 
             // Advance snd.una & snd.nxt
-            if(seqdiff(c->snd.nxt, hdr.ack) < 0)
-                c->snd.nxt = hdr.ack;
-            c->snd.una = hdr.ack;
+            if(seqdiff(c->snd.nxt, pkt->hdr.ack) < 0)
+                c->snd.nxt = pkt->hdr.ack;
+            c->snd.una = pkt->hdr.ack;
 
             // Reset triplicate ack detection
             c->dupack = 0;
@@ -1157,7 +1316,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             // Update congestion window size
             // When the acknowledged transmit number matches the current transmit number, increase the congestion window.
             // Otherwise on retransmit keep it low to leave the receiver time to catch up if busy.
-            if(hdr.tra == c->snd.trs) {
+            if(pkt->hdr.tra == c->snd.trs) {
                 if(c->snd.cwnd < c->snd.ssthresh) // slow start
                     c->snd.cwnd += min(data_acked, c->utcp->mtu);
                 else // congestion avoidance
@@ -1197,7 +1356,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             // Only for triplicate acks that signal missing data perform the retransmit
             c->dupack++;
             // ignore additional triplicate acks for old transmit sequences
-            if(c->dupack == 3 && hdr.tra == c->snd.trs) {
+            if(c->dupack == 3 && pkt->hdr.tra == c->snd.trs) {
                 debug("Triplicate ACK\n");
                 // Fast retransmit
                 c->snd.nxt = c->snd.una;
@@ -1232,7 +1391,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     if(c->state == SYN_SENT)
         acceptable = true;
     else {
-        int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
+        int32_t rcv_offset = seqdiff(pkt->hdr.seq, c->rcv.nxt);
         ahead = rcv_offset > 0;
 
         // always accept control data packets that are ahead
@@ -1286,9 +1445,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // seqno rolls back on retransmit, so possibly a previous ack got dropped
 
     if(!acceptable) {
-        debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcvbuf.maxsize);
+        debug("Packet not acceptable, %u <= %u + " PRINT_SIZE_T " < %u\n", c->rcv.nxt, pkt->hdr.seq, len, c->rcv.nxt + c->rcvbuf.maxsize);
         // Ignore unacceptable RST packets.
-        if(hdr.ctl & RST)
+        if(pkt->hdr.ctl & RST)
             return 0;
         // Otherwise, send an ACK back in the hope things improve.
         // needed to trigger the triple ack and reset the sender's seqno
@@ -1300,10 +1459,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // 4a. RST state changes
 
-    if(hdr.ctl & RST) {
+    if(pkt->hdr.ctl & RST) {
         switch(c->state) {
         case SYN_SENT:
-            if(!(hdr.ctl & ACK))
+            if(!(pkt->hdr.ctl & ACK))
                 return 0;
             // The peer has refused our connection.
             set_state(c, CLOSED);
@@ -1312,7 +1471,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                 c->recv(c, NULL, 0);
             return 0;
         case SYN_RECEIVED:
-            if(hdr.ctl & ACK)
+            if(pkt->hdr.ctl & ACK)
                 return 0;
             // We haven't told the application about this connection yet. Silently delete.
             free_connection(c);
@@ -1321,7 +1480,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case FIN_WAIT_1:
         case FIN_WAIT_2:
         case CLOSE_WAIT:
-            if(hdr.ctl & ACK)
+            if(pkt->hdr.ctl & ACK)
                 return 0;
             // The peer has aborted our connection.
             set_state(c, CLOSED);
@@ -1332,7 +1491,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case CLOSING:
         case LAST_ACK:
         case TIME_WAIT:
-            if(hdr.ctl & ACK)
+            if(pkt->hdr.ctl & ACK)
                 return 0;
             // As far as the application is concerned, the connection has already been closed.
             // If it has called utcp_close() already, we can immediately free this connection.
@@ -1354,14 +1513,14 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // 4b. SYN state changes
 
-    if(hdr.ctl & SYN) {
+    if(pkt->hdr.ctl & SYN) {
         switch(c->state) {
         case SYN_SENT:
             // This is a SYNACK. It should always have ACKed the SYN.
             if(!advanced)
                 goto reset;
-            c->rcv.irs = hdr.seq;
-            c->rcv.nxt = hdr.seq;
+            c->rcv.irs = pkt->hdr.seq;
+            c->rcv.nxt = pkt->hdr.seq;
             c->rcv.wnd = c->rcvbuf.maxsize;
             set_state(c, ESTABLISHED);
             // TODO: notify application of this somehow.
@@ -1443,7 +1602,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // 4d. FIN state changes
 
     bool closed = false;
-    if((hdr.ctl & FIN) && hdr.seq + len == c->rcv.nxt) {
+    if((pkt->hdr.ctl & FIN) && pkt->hdr.seq + len == c->rcv.nxt) {
         switch(c->state) {
         case SYN_SENT:
         case SYN_RECEIVED:
@@ -1499,7 +1658,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // Handle new incoming data.
     if(handle_incoming)
     {
-        handle_incoming_data(c, hdr.seq, data, datalen);
+        handle_incoming_data(c, pkt->hdr.seq, pkt->data, datalen);
     }
 
     // Inform the application when the peer closed the connection.
@@ -1511,24 +1670,29 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     return 0;
 
 reset:
-    swap_ports(&hdr);
-    hdr.trs = c->snd.trs;
-    hdr.tra = c->rcv.trs;
-    hdr.wnd = 0;
-    if(hdr.ctl & ACK) {
-        hdr.seq = hdr.ack;
-        hdr.ctl = RST;
-    } else {
-        hdr.ack = hdr.seq + len;
-        hdr.seq = 0;
-        hdr.ctl = RST | ACK;
-    }
-    print_packet(utcp, "send", &hdr, sizeof hdr);
-    if(utcp->send(utcp, &hdr, sizeof hdr) != sizeof hdr) {
-        debug("Error: utcp_recv failed to send RST");
-    }
-    return 0;
+    {
+        struct pkt_t *response = malloc(sizeof(struct pkt_t));
+        memcpy(&response->hdr, &pkt->hdr, sizeof pkt->hdr);
 
+        swap_ports(&response->hdr);
+        response->hdr.trs = c->snd.trs;
+        response->hdr.tra = c->rcv.trs;
+        response->hdr.wnd = 0;
+        if(response->hdr.ctl & ACK) {
+            response->hdr.seq = response->hdr.ack;
+            response->hdr.ctl = RST;
+        } else {
+            response->hdr.ack = response->hdr.seq + len;
+            response->hdr.seq = 0;
+            response->hdr.ctl = RST | ACK;
+        }
+        print_packet(utcp, "send", response, sizeof response->hdr);
+        if(!utcp_send_packet_or_queue(c, response, sizeof response->hdr)) {
+            debug("Error: utcp_recv failed to send RST");
+            free(response);
+        }
+        return 0;
+    }
 }
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
@@ -1589,10 +1753,6 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
     c->snd.last++;
 
     ack(c, false, 0);
-    if(!timerisset(&c->rtrx_timeout))
-        start_retransmit_timer(c);
-    if(!timerisset(&c->conn_timeout))
-        start_connection_timer(c);
     return 0;
 }
 
@@ -1643,20 +1803,18 @@ int utcp_abort(struct utcp_connection *c) {
 
     // Send RST
 
-    struct hdr hdr;
+    struct pkt_t *pkt = calloc(1, sizeof(struct pkt_t));
+    pkt->hdr.src = c->src;
+    pkt->hdr.dst = c->dst;
+    pkt->hdr.seq = c->snd.nxt;
+    pkt->hdr.trs = c->snd.trs;
+    pkt->hdr.tra = c->rcv.trs;
+    pkt->hdr.ctl = RST;
 
-    hdr.src = c->src;
-    hdr.dst = c->dst;
-    hdr.seq = c->snd.nxt;
-    hdr.ack = 0;
-    hdr.trs = c->snd.trs;
-    hdr.tra = c->rcv.trs;
-    hdr.wnd = 0;
-    hdr.ctl = RST;
-
-    print_packet(c->utcp, "send", &hdr, sizeof hdr);
-    if(c->utcp->send(c->utcp, &hdr, sizeof hdr) != sizeof hdr) {
+    print_packet(c->utcp, "send", pkt, sizeof pkt->hdr);
+    if(!utcp_send_packet_or_queue(c, pkt, sizeof pkt->hdr)) {
         debug("Error: utcp_abort failed to send RST");
+        free(pkt);
     }
     return 0;
 }
@@ -1670,7 +1828,7 @@ int utcp_abort(struct utcp_connection *c) {
 struct timeval utcp_timeout(struct utcp *utcp) {
     struct timeval now;
     gettimeofday(&now, NULL);
-    struct timeval next = {now.tv_sec + 3600, now.tv_usec};
+    struct timeval next = {3600, 0};
 
     for(int i = 0; i < utcp->nconnections; i++) {
         struct utcp_connection *c = utcp->connections[i];
@@ -1696,27 +1854,67 @@ struct timeval utcp_timeout(struct utcp *utcp) {
                     c->recv(c, NULL, 0);
                 continue;
             }
-            if(timercmp(&c->conn_timeout, &next, <))
-                next = c->conn_timeout;
+            struct timeval diff;
+            timersub(&c->conn_timeout, &now, &diff);
+            if(timercmp(&diff, &next, <))
+                next = diff;
         }
 
-        // check retransmit timeout
+        // attempt to send packets from pending queue
+        if(!utcp_send_queued(c)) {
+            // retry with 1ms timeout
+            struct timeval retry = {0,1000};
+            if(timercmp(&retry, &next, <))
+                next = retry;
+            continue;
+        }
+
+        // when there's nothing pending queued, check the retransmit timeout
         if(timerisset(&c->rtrx_timeout)) {
             if(timercmp(&c->rtrx_timeout, &now, <)) {
                 debug("retransmit()\n");
-                retransmit(c);
+                if(!retransmit(c)) {
+                    // when the retransmit failed, retry with 1ms timeout
+                    struct timeval retry = {0,1000};
+                    if(timercmp(&retry, &next, <))
+                        next = retry;
+                    continue;
+                }
             }
-            if(timercmp(&c->rtrx_timeout, &next, <))
-                next = c->rtrx_timeout;
+            struct timeval diff;
+            timersub(&c->rtrx_timeout, &now, &diff);
+            if(timercmp(&diff, &next, <))
+                next = diff;
         }
 
-        if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
-            c->poll(c, buffer_free(&c->sndbuf));
+        // when the connection is established, process all data to be sent
+        if(c->state == ESTABLISHED || c->state == CLOSE_WAIT) {
+            // when the poll callback is set and there's free buffer left, poll new data to the buffer
+            if(buffer_free(&c->sndbuf) && c->poll) {
+                c->poll(c, buffer_free(&c->sndbuf));
+            }
+
+            // try to send any remainining buffered data
+            // the polling might only call utcp_send and ack when there's something new to send
+            // on error return with a 1ms timeout to retry soon
+            if(0 != ack(c, false)) {
+                struct timeval retry = {0,1000};
+                if(timercmp(&retry, &next, <))
+                    next = retry;
+            }
+        }
+        // also retry the last shutdown send if failed
+        else if(c->state == FIN_WAIT_1 || c->state == CLOSING) {
+            // on error return with a 1ms timeout to retry soon
+            if(0 != ack(c, false)) {
+                struct timeval retry = {0,1000};
+                if(timercmp(&retry, &next, <))
+                    next = retry;
+            }
+        }
     }
 
-    struct timeval diff;
-    timersub(&next, &now, &diff);
-    return diff;
+    return next;
 }
 
 bool utcp_is_active(struct utcp *utcp) {
@@ -1755,11 +1953,14 @@ void utcp_exit(struct utcp *utcp) {
     if(!utcp)
         return;
     for(int i = 0; i < utcp->nconnections; i++) {
-        if(!utcp->connections[i]->reapable)
+        struct utcp_connection *c = utcp->connections[i];
+        if(!c->reapable)
             debug("Warning, freeing unclosed connection %p\n", utcp->connections[i]);
-        buffer_exit(&utcp->connections[i]->rcvbuf);
-        buffer_exit(&utcp->connections[i]->sndbuf);
-        free(utcp->connections[i]);
+        if(c->pending_to_send)
+            list_delete_list(c->pending_to_send);
+        buffer_exit(&c->rcvbuf);
+        buffer_exit(&c->sndbuf);
+        free(c);
     }
     free(utcp->connections);
     free(utcp);
