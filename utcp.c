@@ -1129,6 +1129,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             if(seqdiff(c->snd.nxt, hdr.ack) < 0)
                 c->snd.nxt = hdr.ack;
             c->snd.una = hdr.ack;
+
+            // Reset triplicate ack detection
             c->dupack = 0;
 
             // Update congestion window size
