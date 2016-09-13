@@ -1354,7 +1354,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             if(data_acked && c->ack)
                 c->ack(c, data_acked);
         }
-        else if(!progress && !len && hdr.ctl & RTR) {
+        else if(!progress && !len && pkt->hdr.ctl & RTR) {
             // Count duplicate acks but disregard those for packets that were behind
             // Only for triplicate acks that signal missing data perform the retransmit
             c->dupack++;
