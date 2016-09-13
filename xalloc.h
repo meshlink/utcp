@@ -17,8 +17,8 @@
    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef __MESHLINK_XALLOC_H__
-#define __MESHLINK_XALLOC_H__
+#ifndef __UTCP_XALLOC_H__
+#define __UTCP_XALLOC_H__
 
 #include <stdlib.h>
 
@@ -77,4 +77,4 @@ static inline int xasprintf(char **strp, const char *fmt, ...) {
 	return result;
 }
 
-#endif
+#endif /* __UTCP_XALLOC_H__ */

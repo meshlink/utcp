@@ -50,6 +50,7 @@ struct utcp_connection;
 typedef bool (*utcp_pre_accept_t)(struct utcp *utcp, uint16_t port);
 typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, uint16_t port);
 
+// @return the length sent or -1 on error
 typedef ssize_t (*utcp_send_t)(struct utcp *utcp, const void *data, size_t len);
 typedef void (*utcp_recv_t)(struct utcp_connection *connection, const void *data, size_t len);
 
@@ -61,6 +62,7 @@ extern void utcp_exit(struct utcp *utcp);
 
 extern struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t port, utcp_recv_t recv, void *priv);
 extern void utcp_accept(struct utcp_connection *utcp, utcp_recv_t recv, void *priv);
+extern ssize_t utcp_buffer(struct utcp_connection *connection, const void *data, size_t len);
 extern ssize_t utcp_send(struct utcp_connection *connection, const void *data, size_t len);
 extern ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len);
 extern int utcp_close(struct utcp_connection *connection);
