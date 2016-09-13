@@ -545,7 +545,7 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
     set_state(c, ESTABLISHED);
 }
 
-static void ack(struct utcp_connection *c, bool sendatleastone) {
+static void ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) {
     int32_t left = seqdiff(c->snd.last, c->snd.nxt);
     assert(left >= 0);
 
@@ -584,7 +584,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
     pkt->hdr.trs = c->snd.trs;
     pkt->hdr.tra = c->rcv.trs;
     pkt->hdr.wnd = c->rcv.wnd;
-    pkt->hdr.ctl = ACK;
+    pkt->hdr.ctl = ACK | flags;
     pkt->hdr.aux = 0;
 
     do {
@@ -670,7 +670,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
     c->snd.last += len;
 
-    ack(c, false);
+    ack(c, false, 0);
     if(!timerisset(&c->rtrx_timeout))
         start_retransmit_timer(c);
     if(!timerisset(&c->conn_timeout))
@@ -1191,21 +1191,21 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             // Call ack callback if set
             if(data_acked && c->ack)
                 c->ack(c, data_acked);
-        } else {
-            // Handle triplicate ack
-            if(!progress && !len) {
-                c->dupack++;
-                // ignore additional triplicate acks for old transmit sequences
-                if(c->dupack == 3 && hdr.tra == c->snd.trs) {
-                    debug("Triplicate ACK\n");
-                    // Fast retransmit
-                    c->snd.nxt = c->snd.una;
-                    // Fast recovery
-                    c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
-                    c->snd.cwnd = c->snd.ssthresh;
-                    if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
-                        c->snd.cwnd = c->cwnd_max;
-                }
+        }
+        else if(!progress && !len && hdr.ctl & RTR) {
+            // Count duplicate acks but disregard those for packets that were behind
+            // Only for triplicate acks that signal missing data perform the retransmit
+            c->dupack++;
+            // ignore additional triplicate acks for old transmit sequences
+            if(c->dupack == 3 && hdr.tra == c->snd.trs) {
+                debug("Triplicate ACK\n");
+                // Fast retransmit
+                c->snd.nxt = c->snd.una;
+                // Fast recovery
+                c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
+                c->snd.cwnd = c->snd.ssthresh;
+                if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
+                    c->snd.cwnd = c->cwnd_max;
             }
         }
 
@@ -1227,11 +1227,13 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     size_t datalen = len;
     bool acceptable = false;
+    bool ahead = false;
 
     if(c->state == SYN_SENT)
         acceptable = true;
     else {
         int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
+        ahead = rcv_offset > 0;
 
         // always accept control data packets that are ahead
         if(datalen == 0)
@@ -1250,10 +1252,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                     datalen += rcv_offset;
                     acceptable = true;
                 }
-            }
-            // accept packets that can partially be stored to the buffer
-            else
+            } else {
+                // accept packets that can partially be stored to the buffer
                 acceptable = rcv_offset < c->rcvbuf.maxsize;
+            }
         }
     }
 
@@ -1290,7 +1292,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             return 0;
         // Otherwise, send an ACK back in the hope things improve.
         // needed to trigger the triple ack and reset the sender's seqno
-        ack(c, true);
+        ack(c, true, ahead? RTR: 0);
         return 0;
     }
 
@@ -1488,7 +1490,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     //   -> sendatleastone = true
     // - or we got an ack, so we should maybe send a bit more data
     //   -> sendatleastone = false
-    ack(c, len || prevrcvnxt != c->rcv.nxt);
+    ack(c, len || prevrcvnxt != c->rcv.nxt, ahead? RTR: 0);
 
     // 6. Send new data to application
     // Given the ack is used for roundtrip measurement and a too high response time or variation
@@ -1586,7 +1588,7 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
     // inc .last for the FIN
     c->snd.last++;
 
-    ack(c, false);
+    ack(c, false, 0);
     if(!timerisset(&c->rtrx_timeout))
         start_retransmit_timer(c);
     if(!timerisset(&c->conn_timeout))
