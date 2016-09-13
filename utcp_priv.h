@@ -151,6 +151,7 @@ struct utcp_connection {
         uint16_t trs; // transmit number received
         uint32_t wnd;
         uint32_t irs;
+        bool ahead; // whether the last received data was ahead of the next sequence number
     } rcv;
 
     int dupack;

@@ -682,7 +682,7 @@ void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
     set_state(c, ESTABLISHED);
 }
 
-static int ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) {
+static int ack(struct utcp_connection *c, bool sendatleastone) {
     if(sendatleastone) {
         c->sendatleastone = true;
     }
@@ -729,7 +729,7 @@ static int ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) {
     pkt->hdr.trs = c->snd.trs;
     pkt->hdr.tra = c->rcv.trs;
     pkt->hdr.wnd = c->rcv.wnd;
-    pkt->hdr.ctl = ACK | flags;
+    pkt->hdr.ctl = c->rcv.ahead? ACK | RTR: ACK;
     pkt->hdr.aux = 0;
 
     int err = 0;
@@ -777,6 +777,9 @@ static int ack(struct utcp_connection *c, bool sendatleastone, uint16_t flags) {
         // if anything sent, andvance
         c->snd.nxt += seglen;
         c->sendatleastone = false;
+
+        // don't report back an ahead packet twice
+        c->rcv.ahead = false;
 
         // on outgoing progess, initialize the timers if not already
         if(seglen > 0) {
@@ -853,7 +856,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
     ssize_t buffered = utcp_buffer(c, data, len);
 
     // attempt to send the buffered data
-    ack(c, false, 0);
+    ack(c, false);
 
     return buffered;
 }
@@ -1392,7 +1395,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         acceptable = true;
     else {
         int32_t rcv_offset = seqdiff(pkt->hdr.seq, c->rcv.nxt);
-        ahead = rcv_offset > 0;
+        c->rcv.ahead = rcv_offset > 0;
 
         // always accept control data packets that are ahead
         if(datalen == 0)
@@ -1451,7 +1454,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             return 0;
         // Otherwise, send an ACK back in the hope things improve.
         // needed to trigger the triple ack and reset the sender's seqno
-        ack(c, true, ahead? RTR: 0);
+        ack(c, true);
         return 0;
     }
 
@@ -1649,7 +1652,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     //   -> sendatleastone = true
     // - or we got an ack, so we should maybe send a bit more data
     //   -> sendatleastone = false
-    ack(c, len || prevrcvnxt != c->rcv.nxt, ahead? RTR: 0);
+    ack(c, len || prevrcvnxt != c->rcv.nxt);
 
     // 6. Send new data to application
     // Given the ack is used for roundtrip measurement and a too high response time or variation
@@ -1752,7 +1755,7 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
     // inc .last for the FIN
     c->snd.last++;
 
-    ack(c, false, 0);
+    ack(c, false);
     return 0;
 }
 
