@@ -521,7 +521,11 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
     set_state(c, SYN_SENT);
 
     print_packet(utcp, "send", &hdr, sizeof hdr);
-    utcp->send(utcp, &hdr, sizeof hdr);
+    if(utcp->send(utcp, &hdr, sizeof hdr) != sizeof hdr) {
+        debug("Error: utcp_connect failed to send SYN");
+        free_connection(c);
+        return NULL;
+    }
 
     start_connection_timer(c);
 
@@ -588,16 +592,23 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
         uint32_t bufpos = seqdiff(c->snd.nxt, c->snd.una);
         pkt->hdr.seq = c->snd.nxt;
 
-        c->snd.nxt += seglen;
         left -= seglen;
 
         // when FIN is not ack'ed yet len must be at least 1
-        if(seglen && fin_wanted(c, c->snd.nxt)) {
+        if(seglen && fin_wanted(c, c->snd.nxt + seglen)) {
             seglen--;
             pkt->hdr.ctl |= FIN;
         }
 
         buffer_copy(&c->sndbuf, pkt->data, bufpos, seglen);
+
+        size_t pktlen = sizeof pkt->hdr + seglen;
+        print_packet(c->utcp, "send", pkt, pktlen);
+        if(c->utcp->send(c->utcp, pkt, pktlen) != pktlen) {
+            debug("Error: utcp ack() failed to send pkt %u with ack %u", pkt->hdr.seq, pkt->hdr.ack);
+            // break loop and hope to recover so time later
+            break;
+        }
 
         if(!c->rtt_start.tv_sec) {
             // Start RTT measurement
@@ -606,8 +617,8 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
             debug("Starting RTT measurement, expecting ack %u\n", c->rtt_seq);
         }
 
-        print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
-        c->utcp->send(c->utcp, pkt, sizeof pkt->hdr + seglen);
+        c->snd.nxt += (pkt->hdr.ctl & FIN)? seglen + 1: seglen;
+
     } while(left);
 
     free(pkt);
@@ -707,7 +718,9 @@ static void retransmit(struct utcp_connection *c) {
             pkt->hdr.ack = 0;
             pkt->hdr.ctl = SYN;
             print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-            utcp->send(utcp, pkt, sizeof pkt->hdr);
+            if(utcp->send(utcp, pkt, sizeof pkt->hdr) != sizeof pkt->hdr) {
+                debug("Error: retransmit failed to send SYN");
+            }
             break;
 
         case SYN_RECEIVED:
@@ -716,7 +729,9 @@ static void retransmit(struct utcp_connection *c) {
             pkt->hdr.ack = c->rcv.nxt;
             pkt->hdr.ctl = SYN | ACK;
             print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-            utcp->send(utcp, pkt, sizeof pkt->hdr);
+            if(utcp->send(utcp, pkt, sizeof pkt->hdr) != sizeof pkt->hdr) {
+                debug("Error: retransmit failed to send SYN | ACK");
+            }
             break;
 
         case ESTABLISHED:
@@ -744,9 +759,13 @@ static void retransmit(struct utcp_connection *c) {
             if( c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max )
                 c->snd.cwnd = c->cwnd_max;
             buffer_copy(&c->sndbuf, pkt->data, 0, len);
-            debug("retransmitting unacked data: %lu\n.", (unsigned long)(sizeof pkt->hdr + len));
-            print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
-            utcp->send(utcp, pkt, sizeof pkt->hdr + len);
+
+            size_t pktlen = sizeof pkt->hdr + len;
+            debug("retransmitting unacked data: %lu\n.", (unsigned long)(pktlen));
+            print_packet(c->utcp, "rtrx", pkt, pktlen);
+            if(utcp->send(utcp, pkt, pktlen) != pktlen) {
+                debug("Error: retransmit failed to send LAST_ACK");
+            }
             break;
 
         case CLOSED:
@@ -998,7 +1017,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             hdr.tra = c->rcv.trs;
             hdr.ctl = SYN | ACK;
             print_packet(c->utcp, "send", &hdr, sizeof hdr);
-            utcp->send(utcp, &hdr, sizeof hdr);
+            if(utcp->send(utcp, &hdr, sizeof hdr) != sizeof hdr) {
+                debug("Error: utcp_recv failed to send SYN | ACK");
+            }
         } else {
             // No, we don't want your packets, send a RST back
             len = 1;
@@ -1501,7 +1522,9 @@ reset:
         hdr.ctl = RST | ACK;
     }
     print_packet(utcp, "send", &hdr, sizeof hdr);
-    utcp->send(utcp, &hdr, sizeof hdr);
+    if(utcp->send(utcp, &hdr, sizeof hdr) != sizeof hdr) {
+        debug("Error: utcp_recv failed to send RST");
+    }
     return 0;
 
 }
@@ -1630,7 +1653,9 @@ int utcp_abort(struct utcp_connection *c) {
     hdr.ctl = RST;
 
     print_packet(c->utcp, "send", &hdr, sizeof hdr);
-    c->utcp->send(c->utcp, &hdr, sizeof hdr);
+    if(c->utcp->send(c->utcp, &hdr, sizeof hdr) != sizeof hdr) {
+        debug("Error: utcp_abort failed to send RST");
+    }
     return 0;
 }
 
