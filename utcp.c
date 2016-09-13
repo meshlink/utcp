@@ -107,7 +107,9 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
     }
 
     memcpy(&hdr, pkt, sizeof hdr);
-    fprintf (stderr, "%p %s: len=" PRINT_SIZE_T ", src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
+    fprintf (stderr, "%p %s: len=" PRINT_SIZE_T ", src=%u dst=%u seq=%u ack=%u trs=%u tra=%u wnd=%u ctl=",
+        utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.trs, hdr.tra, hdr.wnd);
+
     if(hdr.ctl & SYN)
         debug("SYN");
     if(hdr.ctl & RST)
@@ -510,6 +512,8 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
     hdr.dst = c->dst;
     hdr.seq = c->snd.iss;
     hdr.ack = 0;
+    hdr.trs = 0;
+    hdr.tra = 0;
     hdr.wnd = c->rcv.wnd;
     hdr.ctl = SYN;
     hdr.aux = 0;
@@ -573,6 +577,8 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
     pkt->hdr.src = c->src;
     pkt->hdr.dst = c->dst;
     pkt->hdr.ack = c->rcv.nxt;
+    pkt->hdr.trs = c->snd.trs;
+    pkt->hdr.tra = c->rcv.trs;
     pkt->hdr.wnd = c->rcv.wnd;
     pkt->hdr.ctl = ACK;
     pkt->hdr.aux = 0;
@@ -688,6 +694,8 @@ static void retransmit(struct utcp_connection *c) {
 
     pkt->hdr.src = c->src;
     pkt->hdr.dst = c->dst;
+    pkt->hdr.trs = ++c->snd.trs;
+    pkt->hdr.tra = c->rcv.trs;
     pkt->hdr.wnd = c->rcv.wnd;
     pkt->hdr.aux = 0;
 
@@ -979,12 +987,15 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             c->snd.wnd = hdr.wnd;
             c->rcv.irs = hdr.seq;
             c->rcv.nxt = c->rcv.irs + 1;
+            c->rcv.trs = hdr.trs;
             set_state(c, SYN_RECEIVED);
 
-            hdr.dst = c->dst;
             hdr.src = c->src;
-            hdr.ack = c->rcv.irs + 1;
+            hdr.dst = c->dst;
             hdr.seq = c->snd.iss;
+            hdr.ack = c->rcv.irs + 1;
+            hdr.trs = c->snd.trs;
+            hdr.tra = c->rcv.trs;
             hdr.ctl = SYN | ACK;
             print_packet(c->utcp, "send", &hdr, sizeof hdr);
             utcp->send(utcp, &hdr, sizeof hdr);
@@ -1009,9 +1020,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // It is for an existing connection.
 
-    // 1. Drop invalid packets.
+    // 1. Check packet validity
 
-    // 1a. Drop packets that should not happen in our current state.
+    // 1a. Drop packets with invalid flags or state
 
     switch(c->state) {
     case SYN_SENT:
@@ -1032,7 +1043,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         break;
     }
 
-    // 1b. Drop packets with an invalid ACK.
+    // 1b. Drop packets with invalid ACK sequence number
     // ackno should never be bigger than snd.last.
     // But it might be bigger than snd.nxt since we reset snd.nxt in retransmit and on triplicate ack.
     // And by package reordering it might be lower than snd.una, still it might have some useful data.
@@ -1046,9 +1057,17 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         goto reset;
     }
 
-    c->snd.wnd = hdr.wnd; // TODO: move below
+    // 2. Advance remote connectio state
 
-    // 2. Advance snd.una and update retransmit timer
+    // 2a. Update received transmit number
+
+    c->rcv.trs = hdr.trs;
+
+    // 2b. Update send window
+
+    c->snd.wnd = hdr.wnd;
+
+    // 2c. Advance acknowledged progress
     // process acks even when hdr.seq doesn't match to adapt early and
     // get triplicate ack check work even when on both ends packets are not acceptable
 
@@ -1062,7 +1081,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
         if(advanced) {
             // RTT measurement
-            if(c->rtt_start.tv_sec) {
+            // check the measurement was started and the transmit number matches the last retransmit
+            if(c->rtt_start.tv_sec && hdr.tra == c->snd.trs) {
+                // check the acknowledged sequence number matches the sequence number of last RTT measurement sent
                 if(c->rtt_seq == hdr.ack) {
                     struct timeval now, diff;
                     gettimeofday(&now, NULL);
@@ -1099,34 +1120,38 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             int32_t bufused = seqdiff(c->snd.last, c->snd.una);
             assert(data_acked <= bufused);
 
+            // Remove data from send buffer
             if(data_acked) {
                 buffer_get(&c->sndbuf, NULL, data_acked);
-                if(c->ack)
-                    c->ack(c, data_acked);
             }
 
-            // Also advance snd.nxt if possible
+            // Advance snd.una & snd.nxt
             if(seqdiff(c->snd.nxt, hdr.ack) < 0)
                 c->snd.nxt = hdr.ack;
-
             c->snd.una = hdr.ack;
+
+            // Reset triplicate ack detection
             c->dupack = 0;
 
-            // Increase the congestion window
-            if(c->snd.cwnd < c->snd.ssthresh) // slow start
-                c->snd.cwnd += min(data_acked, c->utcp->mtu);
-            else // congestion avoidance
-                c->snd.cwnd += max(1, c->utcp->mtu * c->utcp->mtu / c->snd.cwnd);
+            // Update congestion window size
+            // When the acknowledged transmit number matches the current transmit number, increase the congestion window.
+            // Otherwise on retransmit keep it low to leave the receiver time to catch up if busy.
+            if(hdr.tra == c->snd.trs) {
+                if(c->snd.cwnd < c->snd.ssthresh) // slow start
+                    c->snd.cwnd += min(data_acked, c->utcp->mtu);
+                else // congestion avoidance
+                    c->snd.cwnd += max(1, c->utcp->mtu * c->utcp->mtu / c->snd.cwnd);
 
-            // Don't let the send window be larger than either our or the receiver's buffer.
-            if(c->snd.cwnd > c->rcv.wnd)
-                c->snd.cwnd = c->rcv.wnd;
-            if(c->snd.cwnd > c->sndbuf.maxsize)
-                c->snd.cwnd = c->sndbuf.maxsize;
+                // Don't let the send window be larger than either our or the receiver's buffer.
+                if(c->snd.cwnd > c->rcv.wnd)
+                    c->snd.cwnd = c->rcv.wnd;
+                if(c->snd.cwnd > c->sndbuf.maxsize)
+                    c->snd.cwnd = c->sndbuf.maxsize;
 
-            // limit to cwnd_max
-            if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
-                c->snd.cwnd = c->cwnd_max;
+                // limit to cwnd_max
+                if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
+                    c->snd.cwnd = c->cwnd_max;
+            }
 
             // Check if we have sent a FIN that is now ACKed.
             switch(c->state) {
@@ -1141,10 +1166,16 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             default:
                 break;
             }
+
+            // Call ack callback if set
+            if(data_acked && c->ack)
+                c->ack(c, data_acked);
         } else {
+            // Handle triplicate ack
             if(!progress && !len) {
                 c->dupack++;
-                if(c->dupack == 3) {
+                // ignore additional triplicate acks for old transmit sequences
+                if(c->dupack == 3 && hdr.tra == c->snd.trs) {
                     debug("Triplicate ACK\n");
                     // Fast retransmit
                     c->snd.nxt = c->snd.una;
@@ -1157,7 +1188,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             }
         }
 
-        // Update retransmit timer
+        // Reset retransmit timer
 
         // reset on progress, so data can be continously sent over the channel
         // reset on empty response packets, to allow the sender to catch up on queued incoming unacceptable packets
@@ -1169,7 +1200,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // 3. Check incoming data for acceptable seqno and update connection timer
+    // 3. Check for acceptable incoming data
+
+    // 3a. Check packet acceptance
 
     size_t datalen = len;
     bool acceptable = false;
@@ -1203,7 +1236,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // Update connection timer
+    // 3b. Reset connection timer
     // whenever we advance or get an acceptable packet, deem the connection active
 
     if(advanced || acceptable) {
@@ -1226,7 +1259,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // Drop unacceptable packets
+    // 3c. Drop unacceptable packets
     // seqno rolls back on retransmit, so possibly a previous ack got dropped
 
     if(!acceptable) {
@@ -1240,7 +1273,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         return 0;
     }
 
-    // 4. Handle RST packets
+    // 4. Process state changes
+
+    // 4a. RST state changes
 
     if(hdr.ctl & RST) {
         switch(c->state) {
@@ -1294,9 +1329,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
     }
 
-    // 5. Process state changes
-
-    // 5a. SYN state changes
+    // 4b. SYN state changes
 
     if(hdr.ctl & SYN) {
         switch(c->state) {
@@ -1332,7 +1365,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         c->rcv.nxt++;
     }
 
-    // 5b. new data state changes
+    // 4c. new data state changes
 
     if(c->state == SYN_RECEIVED) {
         // This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
@@ -1384,7 +1417,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         handle_incoming = true;
     }
 
-    // 5c. FIN state changes
+    // 4d. FIN state changes
 
     bool closed = false;
     if((hdr.ctl & FIN) && hdr.seq + len == c->rcv.nxt) {
@@ -1427,7 +1460,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         closed = true;
     }
 
-    // 6. Ack accepted packets
+    // 5. Ack accepted packets
 
     // Now we send something back if:
     // - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
@@ -1436,7 +1469,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     //   -> sendatleastone = false
     ack(c, len || prevrcvnxt != c->rcv.nxt);
 
-    // 7. Send new data to application
+    // 6. Send new data to application
     // Given the ack is used for roundtrip measurement and a too high response time or variation
     // easily implicts retransmits, delay all compution intensive processing till after the ack.
 
@@ -1456,6 +1489,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 reset:
     swap_ports(&hdr);
+    hdr.trs = c->snd.trs;
+    hdr.tra = c->rcv.trs;
     hdr.wnd = 0;
     if(hdr.ctl & ACK) {
         hdr.seq = hdr.ack;
@@ -1589,6 +1624,8 @@ int utcp_abort(struct utcp_connection *c) {
     hdr.dst = c->dst;
     hdr.seq = c->snd.nxt;
     hdr.ack = 0;
+    hdr.trs = c->snd.trs;
+    hdr.tra = c->rcv.trs;
     hdr.wnd = 0;
     hdr.ctl = RST;
 

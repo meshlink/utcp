@@ -189,26 +189,35 @@ RETRANSMIT
 RECEIVE PACKET
 --------------
 
-1 Drop invalid packets:
-  a Invalid flags or state
-  b ACK always set
-  c hdr.seq not within our receive window
-  d hdr.ack ahead of snd.nxt or behind snd.una
-2 Handle RST packets
-3 Advance snd.una?
-  a reset conn timer if so
-  b check if our SYN or FIN has been acked
-  c check if any data been acked
+1 Check packet validity
+  a drop packets with invalid flags or state set
+  b drop packets with invalid ACK sequence number
+    - hdr.ack ahead of snd.nxt or behind snd.una
+2 Advance remote connection state
+  a update received transmit number
+  b update send window
+  c advance acknowledged progress
+    - RTT measurement
+    - sub virtual SYN & FIN ack length
     - remove ACKed data from send buffer
-    - increase cwnd
-  d no advance? NewReno
-4 If snd.una == snd.nxt, clear rtrx and conn timer
-5 Process state changes
-  a SYN state changes
-  b new data state changes
-  c FIN state changes
-6 Ack accepted packets
-7 Send new data to application
+    - advance snd.una & snd.nxt
+    - update congestion window size
+    - check if our FIN has been acked
+    - call ack callback
+    - handle triplicate ack
+    - reset retransmit timer
+3 Check for acceptable incoming data
+  a check packet acceptance
+    - hdr.seq not within our receive window
+  b reset connection timer
+  c drop unacceptable packets
+4 Process state changes
+  a RST state changes
+  b SYN state changes
+  c new data state changes
+  d FIN state changes
+5 Ack accepted packets
+6 Send new data to application
 
 CONGESTION AVOIDANCE
 --------------------
