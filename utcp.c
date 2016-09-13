@@ -1172,7 +1172,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             // Handle triplicate ack
             if(!progress && !len) {
                 c->dupack++;
-                if(c->dupack == 3) {
+                // ignore additional triplicate acks for old transmit sequences
+                if(c->dupack == 3 && hdr.tra == c->snd.trs) {
                     debug("Triplicate ACK\n");
                     // Fast retransmit
                     c->snd.nxt = c->snd.una;
