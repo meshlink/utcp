@@ -25,10 +25,11 @@
 
 #define PREP(l) char pkt[(l) + sizeof struct hdr]; struct hdr *hdr = &pkt;
 
-#define SYN 1
-#define ACK 2
-#define FIN 4
-#define RST 8
+#define SYN 0x01
+#define ACK 0x02
+#define RTR 0x04
+#define FIN 0x08
+#define RST 0x10
 
 #define NSACKS 4
 #define DEFAULT_SNDBUFSIZE 4096
@@ -150,6 +151,7 @@ struct utcp_connection {
         uint16_t trs; // transmit number received
         uint32_t wnd;
         uint32_t irs;
+        bool ahead; // whether the last received data was ahead of the next sequence number
     } rcv;
 
     int dupack;
