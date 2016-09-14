@@ -10,7 +10,7 @@ struct utcp *a;
 struct utcp *b;
 struct utcp_connection *c;
 
-ssize_t do_recv(struct utcp_connection *x, const void *data, size_t len) {
+void do_recv(struct utcp_connection *x, const void *data, size_t len) {
 	if(!len) {
 		if(errno)
 			fprintf(stderr, "%p Error: %s\n", x->utcp, strerror(errno));
@@ -20,13 +20,17 @@ ssize_t do_recv(struct utcp_connection *x, const void *data, size_t len) {
 			fprintf(stderr, "closing my side too...\n");
 			utcp_close(x);
 		}
-		return -1;
+		return;
 	}
 
-	if(x == c)
-		return write(0, data, len);
-	else
-		return utcp_send(x, data, len);
+	if(x == c) {
+		ssize_t written = write(0, data, len);
+		if(written != len) {
+			abort();
+		}
+	} else {
+		utcp_send(x, data, len);
+	}
 }
 
 bool do_pre_accept(struct utcp *utcp, uint16_t port) {

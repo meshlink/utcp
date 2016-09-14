@@ -7,11 +7,13 @@ all: $(BIN)
 
 utcp.o: utcp.c utcp.h utcp_priv.h compat.h
 
-test: utcp.o test.c
+list.o: list.c list.h
 
-selftest: utcp.o selftest.c
+test: utcp.o list.o test.c
 
-unittest: utcp.o unittest.c
+selftest: utcp.o list.o selftest.c
+
+unittest: utcp.o list.o unittest.c
 
 clean:
 	rm -f *.o $(BIN)

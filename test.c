@@ -48,7 +48,7 @@ void debug(const char *format, ...) {
 #define debug(...)
 #endif
 
-ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
+void do_recv(struct utcp_connection *c, const void *data, size_t len) {
 	if(!data || !len) {
 		if(errno) {
 			debug("Error: %s\n", strerror(errno));
@@ -57,9 +57,11 @@ ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 			dir &= ~DIR_WRITE;
 			debug("Connection closed by peer\n");
 		}
-		return -1;
+		return;
 	}
-	return write(1, data, len);
+	ssize_t written = write(1, data, len);
+	if(written != len)
+		abort();
 }
 
 void do_accept(struct utcp_connection *nc, uint16_t port) {

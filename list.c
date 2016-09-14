@@ -17,13 +17,16 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
+#include <stdlib.h>
 #include "list.h"
-#include "xalloc.h"
 
 /* (De)constructors */
 
 list_t *list_alloc(list_action_t delete) {
-	list_t *list = xzalloc(sizeof(list_t));
+	void *p = calloc(1, sizeof(list_t));
+	if(!p)
+		abort();
+	list_t *list = p;
 	list->delete = delete;
 
 	return list;
@@ -34,7 +37,10 @@ void list_free(list_t *list) {
 }
 
 list_node_t *list_alloc_node(void) {
-	return xzalloc(sizeof(list_node_t));
+	void *p = calloc(1, sizeof(list_node_t));
+	if(!p)
+		abort();
+	return p;
 }
 
 void list_free_node(list_t *list, list_node_t *node) {
