@@ -1389,7 +1389,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     size_t datalen = len;
     bool acceptable = false;
-    bool ahead = false;
 
     if(c->state == SYN_SENT)
         acceptable = true;
