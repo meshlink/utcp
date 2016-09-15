@@ -1142,46 +1142,56 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         if(pkt->hdr.ctl & RST)
             return 0;
 
-        // Is it a SYN packet and are we LISTENing?
-
-        if(pkt->hdr.ctl & SYN && !(pkt->hdr.ctl & ACK) && utcp->accept) {
-            // If we don't want to accept it, send a RST back
-            if((utcp->pre_accept && !utcp->pre_accept(utcp, pkt->hdr.dst))) {
-                len = 1;
-                goto reset;
-            }
-
-            // Try to allocate memory, otherwise send a RST back
-            c = allocate_connection(utcp, pkt->hdr.dst, pkt->hdr.src);
-            if(!c) {
-                len = 1;
-                goto reset;
-            }
-
-            // Return SYN+ACK, go to SYN_RECEIVED state
-            c->snd.wnd = pkt->hdr.wnd;
-            c->rcv.irs = pkt->hdr.seq;
-            c->rcv.nxt = c->rcv.irs + 1;
-            c->rcv.trs = pkt->hdr.trs;
-            set_state(c, SYN_RECEIVED);
-
-            struct pkt_t *response = calloc(1, sizeof(struct pkt_t));;
-            response->hdr.dst = c->dst;
-            response->hdr.src = c->src;
-            response->hdr.ack = c->rcv.irs + 1;
-            response->hdr.seq = c->snd.iss;
-            response->hdr.trs = c->snd.trs;
-            response->hdr.tra = c->rcv.trs;
-            response->hdr.ctl = SYN | ACK;
-            print_packet(c->utcp, "send", response, sizeof response->hdr);
-            if(!utcp_send_packet_or_queue(c, response, sizeof response->hdr)) {
-                debug("Error: utcp_recv failed to send SYN | ACK");
-                free(response);
-            }
-        } else {
+        // Is it a SYN packet?
+        if(!(pkt->hdr.ctl & SYN) || (pkt->hdr.ctl & ACK)) {
             // No, we don't want your packets, send a RST back
+            debug("Warning: connection rejected, hdr.ctl=%u\n", pkt->hdr.ctl);
             len = 1;
             goto reset;
+        }
+
+        // Are we LISTENing?
+        if(!utcp->accept) {
+            // No, we don't want your packets, send a RST back
+            debug("Warning: connection rejected, not listening\n");
+            len = 1;
+            goto reset;
+        }
+
+        // If we don't want to accept it, send a RST back
+        if((utcp->pre_accept && !utcp->pre_accept(utcp, pkt->hdr.dst))) {
+            debug("Info: connection not accepted, dst=%u\n", (unsigned int)pkt->hdr.dst);
+            len = 1;
+            goto reset;
+        }
+
+        // Try to allocate memory, otherwise send a RST back
+        c = allocate_connection(utcp, pkt->hdr.dst, pkt->hdr.src);
+        if(!c) {
+            debug("Error: failed to allocate connection\n");
+            len = 1;
+            goto reset;
+        }
+
+        // Return SYN+ACK, go to SYN_RECEIVED state
+        c->snd.wnd = pkt->hdr.wnd;
+        c->rcv.irs = pkt->hdr.seq;
+        c->rcv.nxt = c->rcv.irs + 1;
+        c->rcv.trs = pkt->hdr.trs;
+        set_state(c, SYN_RECEIVED);
+
+        struct pkt_t *response = calloc(1, sizeof(struct pkt_t));;
+        response->hdr.dst = c->dst;
+        response->hdr.src = c->src;
+        response->hdr.ack = c->rcv.irs + 1;
+        response->hdr.seq = c->snd.iss;
+        response->hdr.trs = c->snd.trs;
+        response->hdr.tra = c->rcv.trs;
+        response->hdr.ctl = SYN | ACK;
+        print_packet(c->utcp, "send", response, sizeof response->hdr);
+        if(!utcp_send_packet_or_queue(c, response, sizeof response->hdr)) {
+            debug("Error: utcp_recv failed to send SYN | ACK");
+            free(response);
         }
 
         return 0;
@@ -1462,6 +1472,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             if(!(pkt->hdr.ctl & ACK))
                 return 0;
             // The peer has refused our connection.
+            debug("Warning: peer refused connection, %p state=%s\n", c, strstate[c->state]);
             set_state(c, CLOSED);
             errno = ECONNREFUSED;
             if(c->recv)
@@ -1480,6 +1491,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             if(pkt->hdr.ctl & ACK)
                 return 0;
             // The peer has aborted our connection.
+            debug("Info: connection aborted, %p state=%s\n", c, strstate[c->state]);
             set_state(c, CLOSED);
             errno = ECONNRESET;
             if(c->recv)
@@ -1500,10 +1512,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             set_state(c, CLOSED);
             return 0;
         default:
-#ifdef UTCP_DEBUG
-            debug("Error: utcp_recv RST unexpected connection state %p %s\n", c, strstate[c->state]);
-            abort();
-#endif
+            debug("Warning: utcp_recv RST unexpected connection state %p %s\n", c, strstate[c->state]);
             break;
         }
     }
@@ -1514,8 +1523,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         switch(c->state) {
         case SYN_SENT:
             // This is a SYNACK. It should always have ACKed the SYN.
-            if(!advanced)
+            if(!advanced) {
+                debug("Warning: SYNACK didn't advance, %p state=%s\n", c, strstate[c->state]);
                 goto reset;
+            }
             c->rcv.irs = pkt->hdr.seq;
             c->rcv.nxt = pkt->hdr.seq;
             c->rcv.wnd = c->rcvbuf.maxsize;
@@ -1531,12 +1542,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case LAST_ACK:
         case TIME_WAIT:
             // Ehm, no. We should never receive a second SYN.
+            debug("Warning: received a second SYN, %p state=%s\n", c, strstate[c->state]);
             goto reset;
         default:
-#ifdef UTCP_DEBUG
-            debug("Error: utcp_recv SYN unexpected connection state %p %s\n", c, strstate[c->state]);
-            abort();
-#endif
+            debug("Warning: utcp_recv SYN unexpected connection state %p %s\n", c, strstate[c->state]);
             return 0;
         }
 
@@ -1548,14 +1557,22 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     if(c->state == SYN_RECEIVED) {
         // This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
-        if(!advanced)
+        if(!advanced) {
+            debug("Warning: ACK didn't advance the SYNACK, %p state=%s\n", c, strstate[c->state]);
             goto reset;
+        }
 
         // Are we still LISTENing?
-        if(utcp->accept)
-            utcp->accept(c, c->src);
-
+        if(!utcp->accept) {
+            debug("Warning: not listening, closing %p state=%s\n", c, strstate[c->state]);
+            set_state(c, CLOSED);
+            c->reapable = true;
+            goto reset;
+        }
+        
+        utcp->accept(c, c->src);
         if(c->state != ESTABLISHED) {
+            debug("Warning: couldn't establish connection, closing %p state=%s\n", c, strstate[c->state]);
             set_state(c, CLOSED);
             c->reapable = true;
             goto reset;
@@ -1568,10 +1585,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case SYN_SENT:
         case SYN_RECEIVED:
             // This should never happen.
-#ifdef UTCP_DEBUG
-            debug("Error: utcp_recv handle_incoming_data unexpected connection state %p %s\n", c, strstate[c->state]);
-            abort();
-#endif
+            debug("Warning: utcp_recv handle_incoming_data unexpected connection state %p %s\n", c, strstate[c->state]);
             return 0;
         case ESTABLISHED:
         case FIN_WAIT_1:
@@ -1582,12 +1596,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case LAST_ACK:
         case TIME_WAIT:
             // Ehm no, We should never receive more data after a FIN.
+            debug("Warning: received data after the FIN, %p state=%s\n", c, strstate[c->state]);
             goto reset;
         default:
-#ifdef UTCP_DEBUG
-            debug("Error: utcp_recv handle_incoming_data unexpected connection state %p %s\n", c, strstate[c->state]);
-            abort();
-#endif
+            debug("Warning: utcp_recv handle_incoming_data unexpected connection state %p %s\n", c, strstate[c->state]);
             return 0;
         }
 
@@ -1604,10 +1616,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case SYN_SENT:
         case SYN_RECEIVED:
             // This should never happen.
-#ifdef UTCP_DEBUG
-            debug("Error: utcp_recv FIN unexpected connection state %p %s\n", c, strstate[c->state]);
-            abort();
-#endif
+            debug("Warning: utcp_recv FIN unexpected connection state %p %s\n", c, strstate[c->state]);
             break;
         case ESTABLISHED:
             set_state(c, CLOSE_WAIT);
@@ -1623,12 +1632,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         case LAST_ACK:
         case TIME_WAIT:
             // Ehm, no. We should never receive a second FIN.
+            debug("Warning: received a second FIN, %p state=%s\n", c, strstate[c->state]);
             goto reset;
         default:
-#ifdef UTCP_DEBUG
-            debug("Error: utcp_recv FIN unexpected connection state %p %s\n", c, strstate[c->state]);
-            abort();
-#endif
+            debug("Warning: utcp_recv FIN unexpected connection state %p %s\n", c, strstate[c->state]);
             break;
         }
 
