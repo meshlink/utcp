@@ -1510,8 +1510,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 reset:
     swap_ports(&hdr);
-    hdr.trs = c->snd.trs;
-    hdr.tra = c->rcv.trs;
+    hdr.tra = hdr.trs;
+    hdr.trs = c? c->snd.trs: 0;
     hdr.wnd = 0;
     if(hdr.ctl & ACK) {
         hdr.seq = hdr.ack;
