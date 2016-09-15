@@ -1673,8 +1673,8 @@ reset:
         memcpy(&response->hdr, &pkt->hdr, sizeof pkt->hdr);
 
         swap_ports(&response->hdr);
-        response->hdr.trs = c->snd.trs;
-        response->hdr.tra = c->rcv.trs;
+        response->hdr.trs = c? c->snd.trs: 0;
+        response->hdr.tra = pkt->hdr.trs;
         response->hdr.wnd = 0;
         if(response->hdr.ctl & ACK) {
             response->hdr.seq = response->hdr.ack;
