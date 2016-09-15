@@ -1127,7 +1127,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // Drop packets with an unknown CTL flag
 
-    if(pkt->hdr.ctl & ~(SYN | ACK | RST | FIN)) {
+    if(pkt->hdr.ctl & ~(SYN | ACK | RTR | FIN | RST)) {
         errno = EBADMSG;
         return -1;
     }
