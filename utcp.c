@@ -505,7 +505,6 @@ static bool utcp_send_queued(struct utcp_connection *c) {
                 // the pkt receiver might have gone offline causing the routing to fail
                 // drop the packet and continue
                 utcp_log_send_error(entry->pkt, entry->len, sent, true);
-                return false;
             }
         }
 
