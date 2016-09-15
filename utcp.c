@@ -429,9 +429,8 @@ static bool utcp_queue_packet(struct utcp_connection *c, struct pkt_t *pkt, size
     return true;
 }
 
-static bool utcp_send_packet(struct utcp_connection *c, const struct pkt_t *pkt, size_t len) {
+static bool utcp_send_packet(struct utcp *utcp, const struct pkt_t *pkt, size_t len) {
     // attempt to immediately send the packet
-    struct utcp *utcp = c->utcp;
     ssize_t sent = utcp->send(utcp, pkt, len);
     if(sent != len) {
         if(sent > len) {
@@ -881,7 +880,7 @@ static bool send_meta(struct utcp_connection *c, uint32_t seq, uint32_t ack, uin
     pkt->hdr.ctl = flags;
 
     print_packet(c->utcp, "send_meta", pkt, sizeof pkt->hdr);
-    if(!utcp_send_packet(c, pkt, sizeof pkt->hdr)) {
+    if(!utcp_send_packet(c->utcp, pkt, sizeof pkt->hdr)) {
         debug("Error: send_meta failed to send %u", flags);
         free(pkt);
         return false;
@@ -1685,8 +1684,10 @@ reset:
             response->hdr.ctl = RST | ACK;
         }
         print_packet(utcp, "send", response, sizeof response->hdr);
-        if(!utcp_send_packet_or_queue(c, response, sizeof response->hdr)) {
-            debug("Error: utcp_recv failed to send RST");
+
+        // attempt to report back the RST but wait for the next failed packet when not in a condition to send
+        if(!utcp_send_packet(utcp, response, sizeof response->hdr)) {
+            debug("Info: utcp_recv failed to send back RST");
             free(response);
         }
         return 0;
