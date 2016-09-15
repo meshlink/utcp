@@ -727,7 +727,7 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
     pkt->hdr.trs = c->snd.trs;
     pkt->hdr.tra = c->rcv.trs;
     pkt->hdr.wnd = c->rcv.wnd;
-    pkt->hdr.ctl = ACK;
+    pkt->hdr.ctl = c->rcv.ahead? ACK | RTR: ACK;
     pkt->hdr.aux = 0;
 
     int err = 0;
@@ -775,6 +775,9 @@ static int ack(struct utcp_connection *c, bool sendatleastone) {
         // if anything sent, andvance
         c->snd.nxt += seglen;
         c->sendatleastone = false;
+
+        // don't report back an ahead packet twice
+        c->rcv.ahead = false;
 
         // on outgoing progess, initialize the timers if not already
         if(seglen > 0) {
@@ -1124,7 +1127,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // Drop packets with an unknown CTL flag
 
-    if(pkt->hdr.ctl & ~(SYN | ACK | RST | FIN)) {
+    if(pkt->hdr.ctl & ~(SYN | ACK | RTR | FIN | RST)) {
         errno = EBADMSG;
         return -1;
     }
@@ -1358,21 +1361,21 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             // Call ack callback if set
             if(data_acked && c->ack)
                 c->ack(c, data_acked);
-        } else {
-            // Handle triplicate ack
-            if(!progress && !len) {
-                c->dupack++;
-                // ignore additional triplicate acks for old transmit sequences
-                if(c->dupack == 3 && pkt->hdr.tra == c->snd.trs) {
-                    debug("Triplicate ACK\n");
-                    // Fast retransmit
-                    c->snd.nxt = c->snd.una;
-                    // Fast recovery
-                    c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
-                    c->snd.cwnd = c->snd.ssthresh;
-                    if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
-                        c->snd.cwnd = c->cwnd_max;
-                }
+        }
+        else if(!progress && !len && pkt->hdr.ctl & RTR) {
+            // Count duplicate acks but disregard those for packets that were behind
+            // Only for triplicate acks that signal missing data perform the retransmit
+            c->dupack++;
+            // ignore additional triplicate acks for old transmit sequences
+            if(c->dupack == 3 && pkt->hdr.tra == c->snd.trs) {
+                debug("Triplicate ACK\n");
+                // Fast retransmit
+                c->snd.nxt = c->snd.una;
+                // Fast recovery
+                c->snd.ssthresh = max(c->snd.cwnd / 2, 2 * c->utcp->mtu);
+                c->snd.cwnd = c->snd.ssthresh;
+                if(c->cwnd_max > 0 && c->snd.cwnd > c->cwnd_max)
+                    c->snd.cwnd = c->cwnd_max;
             }
         }
 
@@ -1399,6 +1402,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         acceptable = true;
     else {
         int32_t rcv_offset = seqdiff(pkt->hdr.seq, c->rcv.nxt);
+        c->rcv.ahead = rcv_offset > 0;
 
         // always accept control data packets that are ahead
         if(datalen == 0)
@@ -1417,10 +1421,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                     datalen += rcv_offset;
                     acceptable = true;
                 }
-            }
-            // accept packets that can partially be stored to the buffer
-            else
+            } else {
+                // accept packets that can partially be stored to the buffer
                 acceptable = rcv_offset < c->rcvbuf.maxsize;
+            }
         }
     }
 
