@@ -1395,7 +1395,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // 3a. Check packet acceptance
 
-    size_t datalen = len;
+    size_t data_offset = 0;
     bool acceptable = false;
 
     if(c->state == SYN_SENT)
@@ -1405,7 +1405,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         c->rcv.ahead = rcv_offset > 0;
 
         // always accept control data packets that are ahead
-        if(datalen == 0)
+        if(!len)
             acceptable = rcv_offset >= 0;
         else {
             // accept all packets in sequence
@@ -1416,9 +1416,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                 // cut already accepted front overlapping
                 // but even accept packets of len 0 to process valuable flag info
                 // like the FIN without requiring a retransmit
-                if(datalen >= -rcv_offset) {
-                    data -= rcv_offset;
-                    datalen += rcv_offset;
+                if(len >= -rcv_offset) {
+                    data_offset = -rcv_offset;
                     acceptable = true;
                 }
             } else {
@@ -1583,7 +1582,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     }
 
     bool handle_incoming = false;
-    if(datalen) {
+    if(len - data_offset) {
         switch(c->state) {
         case SYN_SENT:
         case SYN_RECEIVED:
@@ -1665,7 +1664,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // Handle new incoming data.
     if(handle_incoming)
     {
-        handle_incoming_data(c, pkt->hdr.seq, pkt->data, datalen);
+        handle_incoming_data(c, pkt->hdr.seq + data_offset, pkt->data + data_offset, len - data_offset);
     }
 
     // Inform the application when the peer closed the connection.
