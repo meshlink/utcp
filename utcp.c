@@ -1005,14 +1005,14 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
         debug("SACK[%d] offset %u len %u\n", i, c->sacks[i].offset, c->sacks[i].len);
 }
 
-static size_t buffer_consumable(struct utcp_connection *c, size_t buffer_start) {
+static size_t buffer_consumable(struct utcp_connection *c, size_t bufferOffset) {
     // Check if we can process out-of-order data now.
-    if(c->sacks[0].len && offset >= c->sacks[0].offset) {
+    if(c->sacks[0].len && bufferOffset >= c->sacks[0].offset) {
         // compute consumable end size
-        size_t consumable = buffer_start;
+        size_t consumable = bufferOffset;
         for(int i = 0; i < NSACKS && c->sacks[i].len && c->sacks[i].offset <= consumable; i++)
             consumable = max(consumable, c->sacks[i].offset + c->sacks[i].len);
-        return consumable - buffer_start;
+        return consumable - bufferOffset;
     }
     return 0;
 }
