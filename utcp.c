@@ -1626,7 +1626,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         closed = true;
     }
 
-    // 5. Ack accepted packets
+    // 5. Consume incoming packet data, advancing the rcv.nxt counter
     char* frombuf = NULL;
     if(handle_incoming && rcv_offset <= 0)
     {
@@ -1648,6 +1648,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         c->rcv.nxt += len;
     }
 
+    // 6. Ack accepted packets
+
     // Now we send something back if:
     // - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
     //   -> sendatleastone = true
@@ -1655,7 +1657,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     //   -> sendatleastone = false
     ack(c, len || prevrcvnxt != c->rcv.nxt);
 
-    // 6. Send new data to application
+    // 7. Send new data to application
     // Given the ack is used for roundtrip measurement and a too high response time or variation
     // easily implicts retransmits, delay all compution intensive processing till after the ack.
 
