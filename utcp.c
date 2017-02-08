@@ -1651,7 +1651,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // 6. Ack accepted packets
 
     // Now we send something back if:
-    // - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
+    // - we received data to process
+    //   -> sendatleastone = true, with RTR flag set for the Triplicate ACK if ahead
+    // - rcv.nxt is changed (ie, we got a SYNACK)
     //   -> sendatleastone = true
     // - or we got an ack, so we should maybe send a bit more data
     //   -> sendatleastone = false
