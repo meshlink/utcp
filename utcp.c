@@ -1067,47 +1067,10 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 }
 
 static void handle_in_order(struct utcp_connection *c, const void *data, size_t len) {
-    char* frombuf = NULL;
-
-    // Check if we can process out-of-order data now.
-    if(c->sacks[0].len && len >= c->sacks[0].offset) {
-        debug("incoming packet len %lu connected with SACK at %u\n", (unsigned long)len, c->sacks[0].offset);
-        ssize_t put = buffer_put_at(&c->rcvbuf, 0, data, len);
-        if(put != len) {
-            // log error but proceed with retrieved data
-            debug("failed to buffer packet data\n");
-        } else {
-            for(int i = 0; i < NSACKS && c->sacks[i].len && c->sacks[i].offset <= len; i++)
-                len = max(len, c->sacks[i].offset + c->sacks[i].len);
-            // c->rcvbuf.data is implemented as a ring buffer so we can't
-            // hand it directly to the application
-            frombuf = malloc(len);
-            buffer_copy(&c->rcvbuf, frombuf, 0, len);
-            data = frombuf;
-        }
-    }
-
     if(c->recv) {
         c->recv(c, data, len);
     }
-
-    if(c->rcvbuf.used)
-        sack_consume(c, len);
-
-    c->rcv.nxt += len;
-    free(frombuf);
 }
-
-
-static void handle_incoming_data(struct utcp_connection *c, uint32_t seq, const void *data, size_t len) {
-    uint32_t offset = seqdiff(seq, c->rcv.nxt);
-
-    if(offset)
-        handle_out_of_order(c, offset, data, len);
-    else
-        handle_in_order(c, data, len);
-}
-
 
 ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     if(!utcp) {
@@ -1407,13 +1370,15 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // 3a. Check packet acceptance
 
+    int32_t rcv_offset = 0;
     size_t data_offset = 0;
+    size_t data_len = len;
     bool acceptable = false;
 
     if(c->state == SYN_SENT)
         acceptable = true;
     else {
-        int32_t rcv_offset = seqdiff(pkt->hdr.seq, c->rcv.nxt);
+        rcv_offset = seqdiff(pkt->hdr.seq, c->rcv.nxt);
         c->rcv.ahead = rcv_offset > 0;
 
         // always accept control data packets that are ahead
@@ -1430,6 +1395,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                 // like the FIN without requiring a retransmit
                 if(len >= -rcv_offset) {
                     data_offset = -rcv_offset;
+                    data_len -= data_offset;
                     acceptable = true;
                 }
             } else {
@@ -1594,7 +1560,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     }
 
     bool handle_incoming = false;
-    if(len - data_offset) {
+    if(data_len) {
         switch(c->state) {
         case SYN_SENT:
         case SYN_RECEIVED:
@@ -1661,6 +1627,26 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     }
 
     // 5. Ack accepted packets
+    char* frombuf = NULL;
+    if(handle_incoming && rcv_offset <= 0)
+    {
+        size_t consumable = buffer_consumable(c, data_len);
+        if( consumable )
+        {
+            debug("consuming buffered SACKs up to %u\n", (unsigned long)( pkt->hdr.seq + data_offset + data_len + consumable));
+
+            frombuf = malloc(data_len + consumable);
+            memcpy( frombuf, pkt->data + data_offset, data_len );
+            buffer_copy(&c->rcvbuf, frombuf + data_len, data_len, consumable);
+            data_len += consumable;
+        }
+
+        if(c->rcvbuf.used)
+            sack_consume(c, data_len);
+
+        // advance ack sequence number for the next packet to receive
+        c->rcv.nxt += len;
+    }
 
     // Now we send something back if:
     // - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
@@ -1676,7 +1662,19 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     // Handle new incoming data.
     if(handle_incoming)
     {
-        handle_incoming_data(c, pkt->hdr.seq + data_offset, pkt->data + data_offset, len - data_offset);
+        if(rcv_offset > 0)
+        {
+            handle_out_of_order(c, rcv_offset, pkt->data, data_len);
+        }
+        else
+        {
+            char* rcv_data = frombuf ? frombuf : pkt->data + data_offset;
+            handle_in_order(c, rcv_data, data_len);
+        }
+    }
+
+    if( frombuf ) {
+        free(frombuf);
     }
 
     // Inform the application when the peer closed the connection.
