@@ -1645,7 +1645,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             sack_consume(c, data_len);
 
         // advance ack sequence number for the next packet to receive
-        c->rcv.nxt += len;
+        c->rcv.nxt += data_len;
     }
 
     // 6. Ack accepted packets
