@@ -119,6 +119,8 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
         debug("FIN");
     if(hdr.ctl & ACK)
         debug("ACK");
+    if(hdr.ctl & RTR)
+        debug("RTR");
 
     if(len > sizeof hdr) {
         uint32_t datalen = len - sizeof hdr;
