@@ -216,8 +216,9 @@ RECEIVE PACKET
   b SYN state changes
   c new data state changes
   d FIN state changes
-5 Ack accepted packets
-6 Send new data to application
+5 Consume incoming packet data
+6 Ack accepted packets
+7 Send new data to application
 
 CONGESTION AVOIDANCE
 --------------------

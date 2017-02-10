@@ -119,6 +119,8 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
         debug("FIN");
     if(hdr.ctl & ACK)
         debug("ACK");
+    if(hdr.ctl & RTR)
+        debug("RTR");
 
     if(len > sizeof hdr) {
         uint32_t datalen = len - sizeof hdr;
@@ -1005,6 +1007,18 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
         debug("SACK[%d] offset %u len %u\n", i, c->sacks[i].offset, c->sacks[i].len);
 }
 
+static size_t buffer_consumable(struct utcp_connection *c, size_t bufferOffset) {
+    // Check if we can process out-of-order data now.
+    if(c->sacks[0].len && bufferOffset >= c->sacks[0].offset) {
+        // compute consumable end size
+        size_t consumable = bufferOffset;
+        for(int i = 0; i < NSACKS && c->sacks[i].len && c->sacks[i].offset <= consumable; i++)
+            consumable = max(consumable, c->sacks[i].offset + c->sacks[i].len);
+        return consumable - bufferOffset;
+    }
+    return 0;
+}
+
 static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, const void *data, size_t len) {
     debug("out of order packet, offset %u\n", offset);
 
@@ -1055,47 +1069,10 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 }
 
 static void handle_in_order(struct utcp_connection *c, const void *data, size_t len) {
-    char* frombuf = NULL;
-
-    // Check if we can process out-of-order data now.
-    if(c->sacks[0].len && len >= c->sacks[0].offset) {
-        debug("incoming packet len %lu connected with SACK at %u\n", (unsigned long)len, c->sacks[0].offset);
-        ssize_t put = buffer_put_at(&c->rcvbuf, 0, data, len);
-        if(put != len) {
-            // log error but proceed with retrieved data
-            debug("failed to buffer packet data\n");
-        } else {
-            for(int i = 0; i < NSACKS && c->sacks[i].len && c->sacks[i].offset <= len; i++)
-                len = max(len, c->sacks[i].offset + c->sacks[i].len);
-            // c->rcvbuf.data is implemented as a ring buffer so we can't
-            // hand it directly to the application
-            frombuf = malloc(len);
-            buffer_copy(&c->rcvbuf, frombuf, 0, len);
-            data = frombuf;
-        }
-    }
-
     if(c->recv) {
         c->recv(c, data, len);
     }
-
-    if(c->rcvbuf.used)
-        sack_consume(c, len);
-
-    c->rcv.nxt += len;
-    free(frombuf);
 }
-
-
-static void handle_incoming_data(struct utcp_connection *c, uint32_t seq, const void *data, size_t len) {
-    uint32_t offset = seqdiff(seq, c->rcv.nxt);
-
-    if(offset)
-        handle_out_of_order(c, offset, data, len);
-    else
-        handle_in_order(c, data, len);
-}
-
 
 ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     if(!utcp) {
@@ -1362,7 +1339,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
             if(data_acked && c->ack)
                 c->ack(c, data_acked);
         }
-        else if(!progress && !len && pkt->hdr.ctl & RTR) {
+        else if(!progress && pkt->hdr.ctl & RTR) {
             // Count duplicate acks but disregard those for packets that were behind
             // Only for triplicate acks that signal missing data perform the retransmit
             c->dupack++;
@@ -1395,17 +1372,19 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
     // 3a. Check packet acceptance
 
-    size_t datalen = len;
+    int32_t rcv_offset = 0;
+    size_t data_offset = 0;
+    size_t data_len = len;
     bool acceptable = false;
 
     if(c->state == SYN_SENT)
         acceptable = true;
     else {
-        int32_t rcv_offset = seqdiff(pkt->hdr.seq, c->rcv.nxt);
+        rcv_offset = seqdiff(pkt->hdr.seq, c->rcv.nxt);
         c->rcv.ahead = rcv_offset > 0;
 
         // always accept control data packets that are ahead
-        if(datalen == 0)
+        if(!len)
             acceptable = rcv_offset >= 0;
         else {
             // accept all packets in sequence
@@ -1416,9 +1395,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
                 // cut already accepted front overlapping
                 // but even accept packets of len 0 to process valuable flag info
                 // like the FIN without requiring a retransmit
-                if(datalen >= -rcv_offset) {
-                    data -= rcv_offset;
-                    datalen += rcv_offset;
+                if(len >= -rcv_offset) {
+                    data_offset = -rcv_offset;
+                    data_len -= data_offset;
                     acceptable = true;
                 }
             } else {
@@ -1583,7 +1562,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
     }
 
     bool handle_incoming = false;
-    if(datalen) {
+    if(data_len) {
         switch(c->state) {
         case SYN_SENT:
         case SYN_RECEIVED:
@@ -1649,23 +1628,59 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         closed = true;
     }
 
-    // 5. Ack accepted packets
+    // 5. Consume incoming packet data, advancing the rcv.nxt counter
+    char* frombuf = NULL;
+    if(handle_incoming && rcv_offset <= 0)
+    {
+        size_t consumable = buffer_consumable(c, data_len);
+        if( consumable )
+        {
+            debug("consuming buffered SACKs up to %u\n", (unsigned long)( pkt->hdr.seq + data_offset + data_len + consumable));
+
+            frombuf = malloc(data_len + consumable);
+            memcpy( frombuf, pkt->data + data_offset, data_len );
+            buffer_copy(&c->rcvbuf, frombuf + data_len, data_len, consumable);
+            data_len += consumable;
+        }
+
+        if(c->rcvbuf.used)
+            sack_consume(c, data_len);
+
+        // advance ack sequence number for the next packet to receive
+        c->rcv.nxt += data_len;
+    }
+
+    // 6. Ack accepted packets
 
     // Now we send something back if:
-    // - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
+    // - we received data to process
+    //   -> sendatleastone = true, with RTR flag set for the Triplicate ACK if ahead
+    // - rcv.nxt is changed (ie, we got a SYNACK)
     //   -> sendatleastone = true
     // - or we got an ack, so we should maybe send a bit more data
     //   -> sendatleastone = false
     ack(c, len || prevrcvnxt != c->rcv.nxt);
 
-    // 6. Send new data to application
+    // 7. Send new data to application
     // Given the ack is used for roundtrip measurement and a too high response time or variation
     // easily implicts retransmits, delay all compution intensive processing till after the ack.
 
     // Handle new incoming data.
     if(handle_incoming)
     {
-        handle_incoming_data(c, pkt->hdr.seq, pkt->data, datalen);
+        if(rcv_offset > 0)
+        {
+            handle_out_of_order(c, rcv_offset, pkt->data, data_len);
+        }
+        else
+        {
+            char* rcv_data = frombuf ? frombuf : pkt->data + data_offset;
+            handle_in_order(c, rcv_data, data_len);
+        }
+    }
+
+    if( frombuf ) {
+        free(frombuf);
     }
 
     // Inform the application when the peer closed the connection.
