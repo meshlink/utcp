@@ -1674,7 +1674,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
         else
         {
-            char* rcv_data = frombuf ? frombuf : pkt->data + data_offset;
+            const char* rcv_data = frombuf ? frombuf : pkt->data + data_offset;
             handle_in_order(c, rcv_data, data_len);
         }
     }
@@ -1854,8 +1854,10 @@ struct timeval utcp_timeout(struct utcp *utcp) {
     gettimeofday(&now, NULL);
     struct timeval next = {3600, 0};
 
-    for(int i = 0; i < utcp->nconnections; i++) {
-        struct utcp_connection *c = utcp->connections[i];
+    static int next_conn = 0;
+
+    for(int i = 0; i < utcp->nconnections; ++i, ++next_conn, next_conn %= utcp->nconnections) {
+        struct utcp_connection *c = utcp->connections[next_conn];
         if(!c)
             continue;
 
@@ -1864,7 +1866,8 @@ struct timeval utcp_timeout(struct utcp *utcp) {
             if(c->reapable) {
                 debug("Reaping %p\n", c);
                 free_connection(c);
-                i--;
+                --i;
+                --next_conn;
             }
             continue;
         }
@@ -1890,7 +1893,9 @@ struct timeval utcp_timeout(struct utcp *utcp) {
             struct timeval retry = {0,1000};
             if(timercmp(&retry, &next, <))
                 next = retry;
-            continue;
+
+            // break on UTCP_WOULDBLOCK to proceed with the next connection next time
+            break;
         }
 
         // when there's nothing pending queued, check the retransmit timeout
@@ -1921,19 +1926,29 @@ struct timeval utcp_timeout(struct utcp *utcp) {
             // try to send any remainining buffered data
             // the polling might only call utcp_send and ack when there's something new to send
             // on error return with a 1ms timeout to retry soon
-            if(0 != ack(c, false)) {
+            int err = ack(c, false);
+            if(0 != err) {
                 struct timeval retry = {0,1000};
                 if(timercmp(&retry, &next, <))
                     next = retry;
+
+                // break on UTCP_WOULDBLOCK to proceed with the next connection next time
+                if(UTCP_WOULDBLOCK == err)
+                    break;
             }
         }
         // also retry the last shutdown send if failed
         else if(c->state == FIN_WAIT_1 || c->state == CLOSING) {
             // on error return with a 1ms timeout to retry soon
-            if(0 != ack(c, false)) {
+            int err = ack(c, false);
+            if(0 != err) {
                 struct timeval retry = {0,1000};
                 if(timercmp(&retry, &next, <))
                     next = retry;
+
+                // break on UTCP_WOULDBLOCK to proceed with the next connection next time
+                if(UTCP_WOULDBLOCK == err)
+                    break;
             }
         }
     }
