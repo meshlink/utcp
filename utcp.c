@@ -1867,6 +1867,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
                 debug("Reaping %p\n", c);
                 free_connection(c);
                 --i;
+                --next_conn;
             }
             continue;
         }
