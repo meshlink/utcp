@@ -1854,8 +1854,10 @@ struct timeval utcp_timeout(struct utcp *utcp) {
     gettimeofday(&now, NULL);
     struct timeval next = {3600, 0};
 
-    for(int i = 0; i < utcp->nconnections; i++) {
-        struct utcp_connection *c = utcp->connections[i];
+    static int next_conn = 0;
+
+    for(int i = 0; i < utcp->nconnections; ++i, ++next_conn %= utcp->nconnections) {
+        struct utcp_connection *c = utcp->connections[next_conn];
         if(!c)
             continue;
 
