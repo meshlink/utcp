@@ -1856,7 +1856,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 
     static int next_conn = 0;
 
-    for(int i = 0; i < utcp->nconnections; ++i, ++next_conn %= utcp->nconnections) {
+    for(int i = 0; i < utcp->nconnections; ++i, ++next_conn, next_conn %= utcp->nconnections) {
         struct utcp_connection *c = utcp->connections[next_conn];
         if(!c)
             continue;
@@ -1939,7 +1939,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
         // also retry the last shutdown send if failed
         else if(c->state == FIN_WAIT_1 || c->state == CLOSING) {
             // on error return with a 1ms timeout to retry soon
-            int err = ack(c, false)) {
+            int err = ack(c, false);
             if(0 != err) {
                 struct timeval retry = {0,1000};
                 if(timercmp(&retry, &next, <))
