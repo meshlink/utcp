@@ -1674,7 +1674,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
         }
         else
         {
-            char* rcv_data = frombuf ? frombuf : pkt->data + data_offset;
+            const char* rcv_data = frombuf ? frombuf : pkt->data + data_offset;
             handle_in_order(c, rcv_data, data_len);
         }
     }
