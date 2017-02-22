@@ -1856,7 +1856,9 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 
     static int next_conn = 0;
 
-    for(int i = 0; i < utcp->nconnections; ++i, ++next_conn, next_conn %= utcp->nconnections) {
+    for(int i = 0; i < utcp->nconnections; ++i, ++next_conn) {
+        next_conn %= utcp->nconnections;
+        
         struct utcp_connection *c = utcp->connections[next_conn];
         if(!c)
             continue;
