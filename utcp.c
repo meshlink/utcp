@@ -122,6 +122,7 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
     if(hdr.ctl & RTR)
         debug("RTR");
 
+#ifdef UTCP_DEBUG_PACKETDATA
     if(len > sizeof hdr) {
         uint32_t datalen = len - sizeof hdr;
         const uint8_t *data = (const uint8_t*)pkt + sizeof hdr;
@@ -139,13 +140,14 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
         debug(str);
         free(str);
     }
+#endif // UTCP_DEBUG_PACKETDATA
 
     debug("\n");
 }
 #else
 #define debug(...)
 #define print_packet(...)
-#endif
+#endif // UTCP_DEBUG
 
 static void free_pkt_entry(struct pkt_entry_t *entry) {
     if(entry) {
