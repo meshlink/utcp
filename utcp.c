@@ -456,6 +456,7 @@ static bool utcp_send_packet(struct utcp *utcp, const struct pkt_t *pkt, size_t 
     return true;
 }
 
+// if successful takes ownership on the pkt data
 static bool utcp_send_packet_or_queue(struct utcp_connection *c, struct pkt_t *pkt, size_t len) {
     // when there are already packets queued, just append it to the list to be processed next utcp_timeout
     if(c->pending_to_send->count) {
@@ -482,6 +483,10 @@ static bool utcp_send_packet_or_queue(struct utcp_connection *c, struct pkt_t *p
             return false;
         }
     }
+
+    // free pkt data if sent
+    free(pkt);
+
     return true;
 }
 
@@ -511,6 +516,9 @@ static bool utcp_send_queued(struct utcp_connection *c) {
                 utcp_log_send_error(entry->pkt, entry->len, sent, true);
             }
         }
+
+        // free pkt when done
+        free(entry->pkt);
 
         list_delete_node(c->pending_to_send, node);
     }
