@@ -151,7 +151,6 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 	if(required > buf->maxsize) {
 		if(offset >= buf->maxsize)
 			return 0;
-		abort();
 		len = buf->maxsize - offset;
 		required = buf->maxsize;
 	}
@@ -647,8 +646,11 @@ cleanup:
  */
 static void sack_consume(struct utcp_connection *c, size_t len) {
 	debug("sack_consume %lu\n", (unsigned long)len);
-	if(len > c->rcvbuf.used)
-		abort();
+	if(len > c->rcvbuf.used) {
+		debug("All SACK entries consumed");
+		c->sacks[0].len = 0;
+		return;
+	}
 
 	buffer_get(&c->rcvbuf, NULL, len);
 
