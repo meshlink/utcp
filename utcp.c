@@ -70,12 +70,12 @@ static void debug(const char *format, ...) {
 static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, size_t len) {
 	struct hdr hdr;
 	if(len < sizeof hdr) {
-		debug("%p %s: short packet (%zu bytes)\n", utcp, dir, len);
+		debug("%p %s: short packet (%lu bytes)\n", utcp, dir, (unsigned long)len);
 		return;
 	}
 
 	memcpy(&hdr, pkt, sizeof hdr);
-	fprintf (stderr, "%p %s: len=%zu, src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
+	debug("%p %s: len=%lu, src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, (unsigned long)len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
 	if(hdr.ctl & SYN)
 		debug("SYN");
 	if(hdr.ctl & RST)
@@ -87,27 +87,17 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 
 	if(len > sizeof hdr) {
 		uint32_t datalen = len - sizeof hdr;
-		uint8_t *str = malloc((datalen << 1) + 7);
-		if(!str) {
-			debug("out of memory");
-			return;
-		}
-		memcpy(str, " data=", 6);
-		uint8_t *strptr = str + 6;
-		const uint8_t *data = pkt;
-		const uint8_t *dataend = data + datalen;
+		const uint8_t *data = (uint8_t *)pkt + sizeof hdr;
+		char str[datalen * 2 + 1];
+		char *p = str;
 
-		while(data != dataend) {
-			*strptr = (*data >> 4) > 9? (*data >> 4) + 55 : (*data >> 4) + 48;
-			++strptr;
-			*strptr = (*data & 0xf) > 9? (*data & 0xf) + 55 : (*data & 0xf) + 48;
-			++strptr;
-			++data;
+		for(uint32_t i = 0; i < datalen; i++) {
+			*p++ = "0123456789ABCDEF"[data[i] >> 4];
+			*p++ = "0123456789ABCDEF"[data[i] & 15];
 		}
-		*strptr = 0;
+		*p = 0;
 
-		debug(str);
-		free(str);
+		debug(" data=%s", str);
 	}
 
 	debug("\n");
@@ -155,7 +145,7 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 	if(buf->maxsize <= buf->used)
 		return 0;
 
-	debug("buffer_put_at %zu %zu %zu\n", buf->used, offset, len);
+	debug("buffer_put_at %lu %lu %lu\n", (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len);
 
 	size_t required = offset + len;
 	if(required > buf->maxsize) {
@@ -656,7 +646,7 @@ cleanup:
  * - the SACK entry is completely before ^, in that case delete it.
  */
 static void sack_consume(struct utcp_connection *c, size_t len) {
-	debug("sack_consume %zu\n", len);
+	debug("sack_consume %lu\n", (unsigned long)len);
 	if(len > c->rcvbuf.used)
 		abort();
 
@@ -732,7 +722,7 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 static void handle_in_order(struct utcp_connection *c, const void *data, size_t len) {
 	// Check if we can process out-of-order data now.
 	if(c->sacks[0].len && len >= c->sacks[0].offset) { // TODO: handle overlap with second SACK
-		debug("incoming packet len %zu connected with SACK at %u\n", len, c->sacks[0].offset);
+		debug("incoming packet len %lu connected with SACK at %u\n", (unsigned long)len, c->sacks[0].offset);
 		buffer_put_at(&c->rcvbuf, 0, data, len); // TODO: handle return value
 		len = max(len, c->sacks[0].offset + c->sacks[0].len);
 		data = c->rcvbuf.data;
@@ -912,7 +902,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	}
 
 	if(!acceptable) {
-		debug("Packet not acceptable, %u <= %u + %zu < %u\n", c->rcv.nxt, hdr.seq, len, c->rcv.nxt + c->rcvbuf.maxsize);
+		debug("Packet not acceptable, %u <= %u + %lu < %u\n", c->rcv.nxt, hdr.seq, (unsigned long)len, c->rcv.nxt + c->rcvbuf.maxsize);
 		// Ignore unacceptable RST packets.
 		if(hdr.ctl & RST)
 			return 0;
