@@ -890,14 +890,15 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 		// cut already accepted front overlapping
 		if(rcv_offset < 0) {
-			acceptable = rcv_offset + len >= 0;
+			acceptable = len > -rcv_offset;
 			if(acceptable) {
 				data -= rcv_offset;
 				len += rcv_offset;
+				hdr.seq -= rcv_offset;
 			}
+		} else {
+			acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt) + len <= c->rcvbuf.maxsize;
 		}
-
-		acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt) + len <= c->rcvbuf.maxsize;
 	}
 
 	if(!acceptable) {
@@ -905,9 +906,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		// Ignore unacceptable RST packets.
 		if(hdr.ctl & RST)
 			return 0;
-		// Otherwise, send an ACK back in the hope things improve.
-		ack(c, true);
-		return 0;
+		// Otherwise, continue processing.
+		len = 0;
 	}
 
 	c->snd.wnd = hdr.wnd; // TODO: move below
