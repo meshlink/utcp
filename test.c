@@ -30,6 +30,7 @@ double dropin;
 double dropout;
 long total_out;
 long total_in;
+FILE *reference;
 
 char *reorder_data;
 size_t reorder_len;
@@ -59,6 +60,17 @@ ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 			debug("Connection closed by peer\n");
 		}
 		return -1;
+	}
+	if(reference) {
+		char buf[len];
+		if(fread(buf, len, 1, reference) != 1) {
+			debug("Error reading reference\n");
+			abort();
+		}
+		if(memcmp(buf, data, len)) {
+			debug("Received data differs from reference\n");
+			abort();
+		}
 	}
 	return write(1, data, len);
 }
@@ -122,6 +134,10 @@ int main(int argc, char *argv[]) {
 	if(getenv("DROPTO")) dropto = atoi(getenv("DROPTO"));
 	if(getenv("REORDER")) reorder = atof(getenv("REORDER"));
 	if(getenv("REORDER_DIST")) reorder_dist = atoi(getenv("REORDER_DIST"));
+
+	char *reference_filename = getenv("REFERENCE");
+	if(reference_filename)
+		reference = fopen(reference_filename, "r");
 
 	if(dropto < dropfrom)
 		dropto = 1 << 30;
