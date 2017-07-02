@@ -142,9 +142,6 @@ static int32_t seqdiff(uint32_t a, uint32_t b) {
 
 // Store data into the buffer
 static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data, size_t len) {
-	if(buf->maxsize <= buf->used)
-		return 0;
-
 	debug("buffer_put_at %lu %lu %lu\n", (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len);
 
 	size_t required = offset + len;
