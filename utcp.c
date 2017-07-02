@@ -49,7 +49,7 @@
 	(r)->tv_sec = (a)->tv_sec - (b)->tv_sec;\
 	(r)->tv_usec = (a)->tv_usec - (b)->tv_usec;\
 	if((r)->tv_usec < 0)\
-		(r)->tv_sec--, (r)->tv_usec += 1000000;\
+		(r)->tv_sec--, (r)->tv_usec += USEC_PER_SEC;\
 } while (0)
 #endif
 
@@ -1434,8 +1434,8 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 	utcp->send = send;
 	utcp->priv = priv;
 	utcp->mtu = DEFAULT_MTU;
-	utcp->timeout = DEFAULT_USER_TIMEOUT; // s
-	utcp->rto = START_RTO; // us
+	utcp->timeout = DEFAULT_USER_TIMEOUT; // sec
+	utcp->rto = START_RTO; // usec
 
 	return utcp;
 }
