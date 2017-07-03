@@ -127,6 +127,8 @@ int main(int argc, char *argv[]) {
 
 	bool server = argc == 2;
 	bool connected = false;
+	uint32_t flags = UTCP_TCP;
+	size_t read_size = 102400;
 
 	if(getenv("DROPIN")) dropin = atof(getenv("DROPIN"));
 	if(getenv("DROPOUT")) dropout = atof(getenv("DROPOUT"));
@@ -134,6 +136,8 @@ int main(int argc, char *argv[]) {
 	if(getenv("DROPTO")) dropto = atoi(getenv("DROPTO"));
 	if(getenv("REORDER")) reorder = atof(getenv("REORDER"));
 	if(getenv("REORDER_DIST")) reorder_dist = atoi(getenv("REORDER_DIST"));
+	if(getenv("FLAGS")) flags = atoi(getenv("FLAGS"));
+	if(getenv("READ_SIZE")) read_size = atoi(getenv("READ_SIZE"));
 
 	char *reference_filename = getenv("REFERENCE");
 	if(reference_filename)
@@ -175,7 +179,7 @@ int main(int argc, char *argv[]) {
 	utcp_set_user_timeout(u, 10);
 
 	if(!server)
-		c = utcp_connect(u, 1, do_recv, NULL);
+		c = utcp_connect_ex(u, 1, do_recv, NULL, flags);
 
 	struct pollfd fds[2] = {
 		{.fd = 0, .events = POLLIN | POLLERR | POLLHUP},
@@ -189,6 +193,8 @@ int main(int argc, char *argv[]) {
 		size_t max = c ? utcp_get_sndbuf_free(c) : 0;
 		if(max > sizeof buf)
 			max = sizeof buf;
+		if(max > read_size)
+			max = read_size;
 
 		int timeout_ms = timeout.tv_sec * 1000 + timeout.tv_usec / 1000 + 1;
 

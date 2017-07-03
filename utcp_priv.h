@@ -97,6 +97,7 @@ struct sack {
 struct utcp_connection {
 	void *priv;
 	struct utcp *utcp;
+	uint32_t flags;
 
 	bool reapable;
 

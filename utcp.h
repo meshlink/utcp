@@ -33,7 +33,8 @@ struct utcp {
 
 struct utcp_connection {
 	void *priv;
-	struct utcp *utcp;
+	struct utcp *const utcp;
+	const uint32_t flags;
 };
 #else
 struct utcp;
@@ -43,6 +44,14 @@ struct utcp_connection;
 #define UTCP_SHUT_RD 0
 #define UTCP_SHUT_WR 1
 #define UTCP_SHUT_RDWR 2
+
+#define UTCP_ORDERED 1
+#define UTCP_RELIABLE 2
+#define UTCP_FRAMED 4
+#define UTCP_DROP_LATE 8
+
+#define UTCP_TCP 3
+#define UTCP_UDP 0
 
 typedef bool (*utcp_pre_accept_t)(struct utcp *utcp, uint16_t port);
 typedef void (*utcp_accept_t)(struct utcp_connection *utcp_connection, uint16_t port);
@@ -55,6 +64,7 @@ typedef void (*utcp_poll_t)(struct utcp_connection *connection, size_t len);
 extern struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_send_t send, void *priv);
 extern void utcp_exit(struct utcp *utcp);
 
+extern struct utcp_connection *utcp_connect_ex(struct utcp *utcp, uint16_t port, utcp_recv_t recv, void *priv, uint32_t flags);
 extern struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t port, utcp_recv_t recv, void *priv);
 extern void utcp_accept(struct utcp_connection *utcp, utcp_recv_t recv, void *priv);
 extern ssize_t utcp_send(struct utcp_connection *connection, const void *data, size_t len);

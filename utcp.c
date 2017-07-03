@@ -378,11 +378,14 @@ static void stop_retransmit_timer(struct utcp_connection *c) {
 	debug("timeout cleared\n");
 }
 
-struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv) {
+struct utcp_connection *utcp_connect_ex(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv, uint32_t flags) {
 	struct utcp_connection *c = allocate_connection(utcp, 0, dst);
 	if(!c)
 		return NULL;
 
+	assert((flags & ~0xf) == 0);
+
+	c->flags = flags;
 	c->recv = recv;
 	c->priv = priv;
 
@@ -405,6 +408,10 @@ struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_
 	c->conn_timeout.tv_sec += utcp->timeout;
 
 	return c;
+}
+
+struct utcp_connection *utcp_connect(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv) {
+	return utcp_connect_ex(utcp, dst, recv, priv, UTCP_TCP);
 }
 
 void utcp_accept(struct utcp_connection *c, utcp_recv_t recv, void *priv) {
