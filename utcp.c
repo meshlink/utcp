@@ -127,6 +127,10 @@ static bool fin_wanted(struct utcp_connection *c, uint32_t seq) {
 	}
 }
 
+static bool is_reliable(struct utcp_connection *c) {
+	return c->flags & UTCP_RELIABLE;
+}
+
 static inline void list_connections(struct utcp *utcp) {
 	debug("%p has %d connections:\n", utcp, utcp->nconnections);
 	for(int i = 0; i < utcp->nconnections; i++)
@@ -389,20 +393,27 @@ struct utcp_connection *utcp_connect_ex(struct utcp *utcp, uint16_t dst, utcp_re
 	c->recv = recv;
 	c->priv = priv;
 
-	struct hdr hdr;
+	struct {
+		struct hdr hdr;
+		uint8_t init[4];
+	} pkt;
 
-	hdr.src = c->src;
-	hdr.dst = c->dst;
-	hdr.seq = c->snd.iss;
-	hdr.ack = 0;
-	hdr.wnd = c->rcv.wnd;
-	hdr.ctl = SYN;
-	hdr.aux = 0;
+	pkt.hdr.src = c->src;
+	pkt.hdr.dst = c->dst;
+	pkt.hdr.seq = c->snd.iss;
+	pkt.hdr.ack = 0;
+	pkt.hdr.wnd = c->rcv.wnd;
+	pkt.hdr.ctl = SYN;
+	pkt.hdr.aux = 0x0101;
+	pkt.init[0] = 1;
+	pkt.init[1] = 0;
+	pkt.init[2] = 0;
+	pkt.init[3] = flags & 0x7;
 
 	set_state(c, SYN_SENT);
 
-	print_packet(utcp, "send", &hdr, sizeof hdr);
-	utcp->send(utcp, &hdr, sizeof hdr);
+	print_packet(utcp, "send", &pkt, sizeof pkt);
+	utcp->send(utcp, &pkt, sizeof pkt);
 
 	gettimeofday(&c->conn_timeout, NULL);
 	c->conn_timeout.tv_sec += utcp->timeout;
@@ -514,7 +525,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		return -1;
 	}
 
-	// Add data to send buffer
+	// Exit early if we have nothing to send.
 
 	if(!len)
 		return 0;
@@ -524,6 +535,8 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		return -1;
 	}
 
+	// Add data to send buffer.
+
 	len = buffer_put(&c->sndbuf, data, len);
 	if(len <= 0) {
 		errno = EWOULDBLOCK;
@@ -532,7 +545,11 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
 	c->snd.last += len;
 	ack(c, false);
-	if(!timerisset(&c->rtrx_timeout))
+	if(!is_reliable(c)) {
+		c->snd.una = c->snd.nxt = c->snd.last;
+		buffer_get(&c->sndbuf, NULL, c->sndbuf.used);
+	}
+	if(is_reliable(c) && !timerisset(&c->rtrx_timeout))
 		start_retransmit_timer(c);
 	return len;
 }
@@ -750,6 +767,12 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 
 
 static void handle_incoming_data(struct utcp_connection *c, uint32_t seq, const void *data, size_t len) {
+	if(!is_reliable(c)) {
+		c->recv(c, data, len);
+		c->rcv.nxt = seq + len;
+		return;
+	}
+
 	uint32_t offset = seqdiff(seq, c->rcv.nxt);
 	if(offset + len > c->rcvbuf.maxsize)
 		abort();
@@ -824,6 +847,19 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			if(!c) {
 				len = 1;
 				goto reset;
+			}
+
+			// Parse auxilliary information
+			if(hdr.aux) {
+				if(hdr.aux != 0x0101 || len < 4 || ((uint8_t *)data)[0] != 1) {
+					len = 1;
+					goto reset;
+				}
+				c->flags = ((uint8_t *)data)[3] & 0x7;
+				data += 4;
+				len -= 4;
+			} else {
+				c->flags = UTCP_TCP;
 			}
 
 			// Return SYN+ACK, go to SYN_RECEIVED state
@@ -1052,7 +1088,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			break;
 		}
 	} else {
-		if(!len) {
+		if(!len && is_reliable(c)) {
 			c->dupack++;
 			if(c->dupack == 3) {
 				debug("Triplicate ACK\n");
@@ -1072,7 +1108,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
 		if(c->snd.una == c->snd.last)
 			stop_retransmit_timer(c);
-		else
+		else if(is_reliable(c))
 			start_retransmit_timer(c);
 	}
 
