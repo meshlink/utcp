@@ -1427,8 +1427,15 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 			retransmit(c);
 		}
 
-		if(c->poll && buffer_free(&c->sndbuf) && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
-			c->poll(c, buffer_free(&c->sndbuf));
+		if(c->poll) {
+			if((c->state == ESTABLISHED || c->state == CLOSE_WAIT)) {
+				uint32_t len =  buffer_free(&c->sndbuf);
+				if(len)
+					c->poll(c, len);
+			} else if(c->state == CLOSED) {
+				c->poll(c, 0);
+			}
+		}
 
 		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <))
 			next = c->conn_timeout;
