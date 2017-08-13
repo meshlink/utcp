@@ -30,6 +30,11 @@
 #define FIN 4
 #define RST 8
 
+#define AUX_INIT 1
+#define AUX_FRAME 2
+#define AUX_SAK 3
+#define AUX_TIMESTAMP 4
+
 #define NSACKS 4
 #define DEFAULT_SNDBUFSIZE 4096
 #define DEFAULT_MAXSNDBUFSIZE 131072

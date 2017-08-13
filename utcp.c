@@ -75,7 +75,7 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 	}
 
 	memcpy(&hdr, pkt, sizeof hdr);
-	debug("%p %s: len=%lu, src=%u dst=%u seq=%u ack=%u wnd=%u ctl=", utcp, dir, (unsigned long)len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd);
+	debug("%p %s: len=%lu, src=%u dst=%u seq=%u ack=%u wnd=%u aux=%x ctl=", utcp, dir, (unsigned long)len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd, hdr.aux);
 	if(hdr.ctl & SYN)
 		debug("SYN");
 	if(hdr.ctl & RST)
@@ -457,7 +457,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
 	struct {
 		struct hdr hdr;
-		char data[];
+		uint8_t data[];
 	} *pkt;
 
 	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
@@ -573,7 +573,7 @@ static void retransmit(struct utcp_connection *c) {
 
 	struct {
 		struct hdr hdr;
-		char data[];
+		uint8_t data[];
 	} *pkt;
 
 	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
@@ -828,6 +828,49 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return -1;
 	}
 
+	// Check for auxiliary headers
+
+	const uint8_t *init = NULL;
+
+	uint16_t aux = hdr.aux;
+	while(aux) {
+		size_t auxlen = 4 * (aux >> 8) & 0xf;
+		uint8_t auxtype = aux & 0xff;
+
+		if(len < auxlen) {
+			errno = EBADMSG;
+			return -1;
+		}
+
+		switch(auxtype) {
+		case AUX_INIT:
+			if(!(hdr.ctl & SYN) || auxlen != 4) {
+				errno = EBADMSG;
+				return -1;
+			}
+			init = data;
+			break;
+		default:
+			errno = EBADMSG;
+			return -1;
+		}
+
+		len -= auxlen;
+		data += auxlen;
+
+		if(!(aux & 0x800))
+			break;
+
+		if(len < 2) {
+			errno = EBADMSG;
+			return -1;
+		}
+
+		memcpy(&aux, data, 2);
+		len -= 2;
+		data += 2;
+	}
+
 	// Try to match the packet to an existing connection
 
 	struct utcp_connection *c = find_connection(utcp, hdr.dst, hdr.src);
@@ -857,14 +900,12 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			}
 
 			// Parse auxilliary information
-			if(hdr.aux) {
-				if(hdr.aux != 0x0101 || len < 4 || ((uint8_t *)data)[0] != 1) {
+			if(init) {
+				if(init[0] < 1) {
 					len = 1;
 					goto reset;
 				}
-				c->flags = ((uint8_t *)data)[3] & 0x7;
-				data += 4;
-				len -= 4;
+				c->flags = init[3] & 0x7;
 			} else {
 				c->flags = UTCP_TCP;
 			}
@@ -875,13 +916,30 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			c->rcv.nxt = c->rcv.irs + 1;
 			set_state(c, SYN_RECEIVED);
 
-			hdr.dst = c->dst;
-			hdr.src = c->src;
-			hdr.ack = c->rcv.irs + 1;
-			hdr.seq = c->snd.iss;
-			hdr.ctl = SYN | ACK;
-			print_packet(c->utcp, "send", &hdr, sizeof hdr);
-			utcp->send(utcp, &hdr, sizeof hdr);
+			struct {
+				struct hdr hdr;
+				uint8_t data[4];
+			} pkt;
+
+			pkt.hdr.src = c->src;
+			pkt.hdr.dst = c->dst;
+			pkt.hdr.ack = c->rcv.irs + 1;
+			pkt.hdr.seq = c->snd.iss;
+			pkt.hdr.wnd = c->rcv.wnd;
+			pkt.hdr.ctl = SYN | ACK;
+			if(init) {
+				pkt.hdr.aux = 0x0101;
+				pkt.data[0] = 1;
+				pkt.data[1] = 0;
+				pkt.data[2] = 0;
+				pkt.data[3] = c->flags & 0x7;
+				print_packet(c->utcp, "send", &pkt, sizeof hdr + 4);
+				utcp->send(utcp, &pkt, sizeof hdr + 4);
+			} else {
+				pkt.hdr.aux = 0;
+				print_packet(c->utcp, "send", &pkt, sizeof hdr);
+				utcp->send(utcp, &pkt, sizeof hdr);
+			}
 		} else {
 			// No, we don't want your packets, send a RST back
 			len = 1;
@@ -1027,6 +1085,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
+	if(!(hdr.ctl & ACK))
+		goto skip_ack;
+
 	// 3. Advance snd.una
 
 	uint32_t advanced = seqdiff(hdr.ack, c->snd.una);
@@ -1119,6 +1180,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			start_retransmit_timer(c);
 	}
 
+skip_ack:
 	// 5. Process SYN stuff
 
 	if(hdr.ctl & SYN) {
@@ -1141,7 +1203,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case LAST_ACK:
 		case TIME_WAIT:
 			// Ehm, no. We should never receive a second SYN.
-			goto reset;
+			return 0;
 		default:
 #ifdef UTCP_DEBUG
 			abort();
@@ -1258,6 +1320,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 reset:
 	swap_ports(&hdr);
 	hdr.wnd = 0;
+	hdr.aux = 0;
 	if(hdr.ctl & ACK) {
 		hdr.seq = hdr.ack;
 		hdr.ctl = RST;
