@@ -587,7 +587,6 @@ static void retransmit(struct utcp_connection *c) {
 
 	switch(c->state) {
 		case SYN_SENT:
-			fprintf(stderr, "Retransmitting SYN\n");
 			// Send our SYN again
 			pkt->hdr.seq = c->snd.iss;
 			pkt->hdr.ack = 0;
