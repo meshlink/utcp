@@ -418,6 +418,8 @@ struct utcp_connection *utcp_connect_ex(struct utcp *utcp, uint16_t dst, utcp_re
 	gettimeofday(&c->conn_timeout, NULL);
 	c->conn_timeout.tv_sec += utcp->timeout;
 
+	start_retransmit_timer(c);
+
 	return c;
 }
 
@@ -585,12 +587,18 @@ static void retransmit(struct utcp_connection *c) {
 
 	switch(c->state) {
 		case SYN_SENT:
+			fprintf(stderr, "Retransmitting SYN\n");
 			// Send our SYN again
 			pkt->hdr.seq = c->snd.iss;
 			pkt->hdr.ack = 0;
 			pkt->hdr.ctl = SYN;
-			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-			utcp->send(utcp, pkt, sizeof pkt->hdr);
+			pkt->hdr.aux = 0x0101;
+			pkt->data[0] = 1;
+			pkt->data[1] = 0;
+			pkt->data[2] = 0;
+			pkt->data[3] = c->flags & 0x7;
+			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + 4);
+			utcp->send(utcp, pkt, sizeof pkt->hdr + 4);
 			break;
 
 		case SYN_RECEIVED:
