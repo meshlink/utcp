@@ -1512,6 +1512,22 @@ void utcp_set_mtu(struct utcp *utcp, uint16_t mtu) {
 		utcp->mtu = mtu;
 }
 
+void utcp_reset_timers(struct utcp *utcp) {
+	if(!utcp)
+		return;
+	struct timeval now, then;
+	gettimeofday(&now, NULL);
+	then = now;
+	then.tv_sec += utcp->timeout;
+	for(int i = 0; i < utcp->nconnections; i++) {
+		utcp->connections[i]->rtrx_timeout = now;
+		utcp->connections[i]->conn_timeout = then;
+		utcp->connections[i]->rtt_start.tv_sec = 0;
+	}
+	if(utcp->rto > START_RTO)
+		utcp->rto = START_RTO;
+}
+
 int utcp_get_user_timeout(struct utcp *u) {
 	return u ? u->timeout : 0;
 }
