@@ -1555,11 +1555,13 @@ void utcp_exit(struct utcp *utcp) {
 	if(!utcp)
 		return;
 	for(int i = 0; i < utcp->nconnections; i++) {
-		if(!utcp->connections[i]->reapable)
-			debug("Warning, freeing unclosed connection %p\n", utcp->connections[i]);
-		buffer_exit(&utcp->connections[i]->rcvbuf);
-		buffer_exit(&utcp->connections[i]->sndbuf);
-		free(utcp->connections[i]);
+		struct utcp_connection *c = utcp->connections[i];
+		if(!c->reapable)
+			if(c->recv)
+				c->recv(c, NULL, 0);
+		buffer_exit(&c->rcvbuf);
+		buffer_exit(&c->sndbuf);
+		free(c);
 	}
 	free(utcp->connections);
 	free(utcp);
