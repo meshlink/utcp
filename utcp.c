@@ -1,6 +1,6 @@
 /*
     utcp.c -- Userspace TCP
-    Copyright (C) 2014 Guus Sliepen <guus@tinc-vpn.org>
+    Copyright (C) 2014-2017 Guus Sliepen <guus@tinc-vpn.org>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -103,8 +103,8 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 	debug("\n");
 }
 #else
-#define debug(...)
-#define print_packet(...)
+#define debug(...) do {} while(0)
+#define print_packet(...) do {} while(0)
 #endif
 
 static void set_state(struct utcp_connection *c, enum state state) {
@@ -129,12 +129,6 @@ static bool fin_wanted(struct utcp_connection *c, uint32_t seq) {
 
 static bool is_reliable(struct utcp_connection *c) {
 	return c->flags & UTCP_RELIABLE;
-}
-
-static inline void list_connections(struct utcp *utcp) {
-	debug("%p has %d connections:\n", utcp, utcp->nconnections);
-	for(int i = 0; i < utcp->nconnections; i++)
-		debug("  %u -> %u state %s\n", utcp->connections[i]->src, utcp->connections[i]->dst, strstate[utcp->connections[i]->state]);
 }
 
 static int32_t seqdiff(uint32_t a, uint32_t b) {
@@ -342,6 +336,13 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	return c;
 }
 
+static inline uint32_t absdiff(uint32_t a, uint32_t b) {
+	if(a > b)
+		return a - b;
+	else
+		return b - a;
+}
+
 // Update RTT variables. See RFC 6298.
 static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
 	if(!rtt) {
@@ -356,7 +357,7 @@ static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
 		utcp->rttvar = rtt / 2;
 		utcp->rto = rtt + max(2 * rtt, CLOCK_GRANULARITY);
 	} else {
-		utcp->rttvar = (utcp->rttvar * 3 + abs(utcp->srtt - rtt)) / 4;
+		utcp->rttvar = (utcp->rttvar * 3 + absdiff(utcp->srtt, rtt)) / 4;
 		utcp->srtt = (utcp->srtt * 7 + rtt) / 8;
 		utcp->rto = utcp->srtt + max(utcp->rttvar, CLOCK_GRANULARITY);
 	}
@@ -709,7 +710,7 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 	debug("out of order packet, offset %u\n", offset);
 	// Packet loss or reordering occured. Store the data in the buffer.
 	ssize_t rxd = buffer_put_at(&c->rcvbuf, offset, data, len);
-	if(rxd < len)
+	if(rxd < 0 || (size_t)rxd < len)
 		abort();
 
 	// Make note of where we put it.
@@ -760,7 +761,7 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 
 	if(c->recv) {
 		ssize_t rxd = c->recv(c, data, len);
-		if(rxd != len) {
+		if(rxd < 0 || (size_t)rxd != len) {
 			// TODO: handle the application not accepting all data.
 			abort();
 		}
@@ -998,7 +999,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 		// cut already accepted front overlapping
 		if(rcv_offset < 0) {
-			acceptable = len > -rcv_offset;
+			acceptable = len > (size_t)-rcv_offset;
 			if(acceptable) {
 				data -= rcv_offset;
 				len += rcv_offset;

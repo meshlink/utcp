@@ -47,10 +47,11 @@ void debug(const char *format, ...) {
 	va_end(ap);
 }
 #else
-#define debug(...)
+#define debug(...) do {} while(0)
 #endif
 
 ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
+	(void)c;
 	if(!data || !len) {
 		if(errno) {
 			debug("Error: %s\n", strerror(errno));
@@ -76,6 +77,7 @@ ssize_t do_recv(struct utcp_connection *c, const void *data, size_t len) {
 }
 
 void do_accept(struct utcp_connection *nc, uint16_t port) {
+	(void)port;
 	utcp_accept(nc, do_recv, NULL);
 	c = nc;
 	utcp_set_accept_cb(c->utcp, NULL, NULL);

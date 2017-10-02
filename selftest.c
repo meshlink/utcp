@@ -30,6 +30,7 @@ ssize_t do_recv(struct utcp_connection *x, const void *data, size_t len) {
 }
 
 bool do_pre_accept(struct utcp *utcp, uint16_t port) {
+	(void)utcp;
 	fprintf(stderr, "pre-accept\n");
 	if(port != 7)
 		return false;
@@ -37,6 +38,7 @@ bool do_pre_accept(struct utcp *utcp, uint16_t port) {
 }
 
 void do_accept(struct utcp_connection *c, uint16_t port) {
+	(void)port;
 	fprintf(stderr, "accept\n");
 	utcp_accept(c, do_recv, NULL);
 }
@@ -55,6 +57,9 @@ ssize_t do_send(struct utcp *utcp, const void *data, size_t len) {
 }
 
 int main(int argc, char *argv[]) {
+	(void)argc;
+	(void)argv;
+
 	srand(time(NULL));
 
 	a = utcp_init(do_accept, do_pre_accept, do_send, NULL);
