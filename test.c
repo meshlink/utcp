@@ -193,8 +193,8 @@ int main(int argc, char *argv[]) {
 
 	while(!connected || utcp_is_active(u)) {
 		size_t max = c ? utcp_get_sndbuf_free(c) : 0;
-		if(max > sizeof buf)
-			max = sizeof buf;
+		if(max > sizeof(buf))
+			max = sizeof(buf);
 		if(max > read_size)
 			max = read_size;
 
@@ -231,8 +231,8 @@ int main(int argc, char *argv[]) {
 			fds[1].revents = 0;
 			debug("netin\n");
 			struct sockaddr_storage ss;
-			socklen_t sl = sizeof ss;
-			int len = recvfrom(s, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)&ss, &sl);
+			socklen_t sl = sizeof(ss);
+			int len = recvfrom(s, buf, sizeof(buf), MSG_DONTWAIT, (struct sockaddr *)&ss, &sl);
 			if(len <= 0) {
 				debug("Error receiving UDP packet: %s\n", strerror(errno));
 				break;

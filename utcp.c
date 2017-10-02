@@ -69,12 +69,12 @@ static void debug(const char *format, ...) {
 
 static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, size_t len) {
 	struct hdr hdr;
-	if(len < sizeof hdr) {
+	if(len < sizeof(hdr)) {
 		debug("%p %s: short packet (%lu bytes)\n", utcp, dir, (unsigned long)len);
 		return;
 	}
 
-	memcpy(&hdr, pkt, sizeof hdr);
+	memcpy(&hdr, pkt, sizeof(hdr));
 	debug("%p %s: len=%lu, src=%u dst=%u seq=%u ack=%u wnd=%u aux=%x ctl=", utcp, dir, (unsigned long)len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd, hdr.aux);
 	if(hdr.ctl & SYN)
 		debug("SYN");
@@ -85,9 +85,9 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 	if(hdr.ctl & ACK)
 		debug("ACK");
 
-	if(len > sizeof hdr) {
-		uint32_t datalen = len - sizeof hdr;
-		const uint8_t *data = (uint8_t *)pkt + sizeof hdr;
+	if(len > sizeof(hdr)) {
+		uint32_t datalen = len - sizeof(hdr);
+		const uint8_t *data = (uint8_t *)pkt + sizeof(hdr);
 		char str[datalen * 2 + 1];
 		char *p = str;
 
@@ -201,7 +201,7 @@ static ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t
 }
 
 static bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen) {
-	memset(buf, 0, sizeof *buf);
+	memset(buf, 0, sizeof(*buf));
 	if(len) {
 		buf->data = malloc(len);
 		if(!buf->data)
@@ -214,7 +214,7 @@ static bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen) {
 
 static void buffer_exit(struct buffer *buf) {
 	free(buf->data);
-	memset(buf, 0, sizeof *buf);
+	memset(buf, 0, sizeof(*buf));
 }
 
 static uint32_t buffer_free(const struct buffer *buf) {
@@ -247,18 +247,18 @@ static struct utcp_connection *find_connection(const struct utcp *utcp, uint16_t
 		.src = src,
 		.dst = dst,
 	}, *keyp = &key;
-	struct utcp_connection **match = bsearch(&keyp, utcp->connections, utcp->nconnections, sizeof *utcp->connections, compare);
+	struct utcp_connection **match = bsearch(&keyp, utcp->connections, utcp->nconnections, sizeof(*utcp->connections), compare);
 	return match ? *match : NULL;
 }
 
 static void free_connection(struct utcp_connection *c) {
 	struct utcp *utcp = c->utcp;
-	struct utcp_connection **cp = bsearch(&c, utcp->connections, utcp->nconnections, sizeof *utcp->connections, compare);
+	struct utcp_connection **cp = bsearch(&c, utcp->connections, utcp->nconnections, sizeof(*utcp->connections), compare);
 
 	assert(cp);
 
 	int i = cp - utcp->connections;
-	memmove(cp, cp + 1, (utcp->nconnections - i - 1) * sizeof *cp);
+	memmove(cp, cp + 1, (utcp->nconnections - i - 1) * sizeof(*cp));
 	utcp->nconnections--;
 
 	buffer_exit(&c->rcvbuf);
@@ -291,13 +291,13 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 			utcp->nallocated = 4;
 		else
 			utcp->nallocated *= 2;
-		struct utcp_connection **new_array = realloc(utcp->connections, utcp->nallocated * sizeof *utcp->connections);
+		struct utcp_connection **new_array = realloc(utcp->connections, utcp->nallocated * sizeof(*utcp->connections));
 		if(!new_array)
 			return NULL;
 		utcp->connections = new_array;
 	}
 
-	struct utcp_connection *c = calloc(1, sizeof *c);
+	struct utcp_connection *c = calloc(1, sizeof(*c));
 	if(!c)
 		return NULL;
 
@@ -331,7 +331,7 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 	// Add it to the sorted list of connections
 
 	utcp->connections[utcp->nconnections++] = c;
-	qsort(utcp->connections, utcp->nconnections, sizeof *utcp->connections, compare);
+	qsort(utcp->connections, utcp->nconnections, sizeof(*utcp->connections), compare);
 
 	return c;
 }
@@ -413,8 +413,8 @@ struct utcp_connection *utcp_connect_ex(struct utcp *utcp, uint16_t dst, utcp_re
 
 	set_state(c, SYN_SENT);
 
-	print_packet(utcp, "send", &pkt, sizeof pkt);
-	utcp->send(utcp, &pkt, sizeof pkt);
+	print_packet(utcp, "send", &pkt, sizeof(pkt));
+	utcp->send(utcp, &pkt, sizeof(pkt));
 
 	gettimeofday(&c->conn_timeout, NULL);
 	c->conn_timeout.tv_sec += utcp->timeout;
@@ -461,7 +461,7 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 		uint8_t data[];
 	} *pkt;
 
-	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+	pkt = malloc(sizeof(pkt->hdr) + c->utcp->mtu);
 	if(!pkt)
 		return;
 
@@ -493,8 +493,8 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 			debug("Starting RTT measurement, expecting ack %u\n", c->rtt_seq);
 		}
 
-		print_packet(c->utcp, "send", pkt, sizeof pkt->hdr + seglen);
-		c->utcp->send(c->utcp, pkt, sizeof pkt->hdr + seglen);
+		print_packet(c->utcp, "send", pkt, sizeof(pkt->hdr) + seglen);
+		c->utcp->send(c->utcp, pkt, sizeof(pkt->hdr) + seglen);
 	} while(left);
 
 	free(pkt);
@@ -577,7 +577,7 @@ static void retransmit(struct utcp_connection *c) {
 		uint8_t data[];
 	} *pkt;
 
-	pkt = malloc(sizeof pkt->hdr + c->utcp->mtu);
+	pkt = malloc(sizeof(pkt->hdr) + c->utcp->mtu);
 	if(!pkt)
 		return;
 
@@ -597,8 +597,8 @@ static void retransmit(struct utcp_connection *c) {
 			pkt->data[1] = 0;
 			pkt->data[2] = 0;
 			pkt->data[3] = c->flags & 0x7;
-			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + 4);
-			utcp->send(utcp, pkt, sizeof pkt->hdr + 4);
+			print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr) + 4);
+			utcp->send(utcp, pkt, sizeof(pkt->hdr) + 4);
 			break;
 
 		case SYN_RECEIVED:
@@ -606,8 +606,8 @@ static void retransmit(struct utcp_connection *c) {
 			pkt->hdr.seq = c->snd.nxt;
 			pkt->hdr.ack = c->rcv.nxt;
 			pkt->hdr.ctl = SYN | ACK;
-			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr);
-			utcp->send(utcp, pkt, sizeof pkt->hdr);
+			print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr));
+			utcp->send(utcp, pkt, sizeof(pkt->hdr));
 			break;
 
 		case ESTABLISHED:
@@ -629,8 +629,8 @@ static void retransmit(struct utcp_connection *c) {
 			c->snd.nxt = c->snd.una + len;
 			c->snd.cwnd = utcp->mtu; // reduce cwnd on retransmit
 			buffer_copy(&c->sndbuf, pkt->data, 0, len);
-			print_packet(c->utcp, "rtrx", pkt, sizeof pkt->hdr + len);
-			utcp->send(utcp, pkt, sizeof pkt->hdr + len);
+			print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr) + len);
+			utcp->send(utcp, pkt, sizeof(pkt->hdr) + len);
 			break;
 
 		case CLOSED:
@@ -693,7 +693,7 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
 			i++;
 		} else {
 			if(i < NSACKS - 1) {
-				memmove(&c->sacks[i], &c->sacks[i + 1], (NSACKS - 1 - i) * sizeof c->sacks[i]);
+				memmove(&c->sacks[i], &c->sacks[i + 1], (NSACKS - 1 - i) * sizeof(c->sacks)[i]);
 				c->sacks[NSACKS - 1].len = 0;
 			} else {
 				c->sacks[i].len = 0;
@@ -724,7 +724,7 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 			if(offset + rxd < c->sacks[i].offset) { // insert before
 				if(!c->sacks[NSACKS - 1].len) { // only if room left
 					debug("Insert SACK entry at %d\n", i);
-					memmove(&c->sacks[i + 1], &c->sacks[i], (NSACKS - i - 1) * sizeof c->sacks[i]);
+					memmove(&c->sacks[i + 1], &c->sacks[i], (NSACKS - i - 1) * sizeof(c->sacks)[i]);
 					c->sacks[i].offset = offset;
 					c->sacks[i].len = rxd;
 				} else {
@@ -811,16 +811,16 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// Drop packets smaller than the header
 
 	struct hdr hdr;
-	if(len < sizeof hdr) {
+	if(len < sizeof(hdr)) {
 		errno = EBADMSG;
 		return -1;
 	}
 
 	// Make a copy from the potentially unaligned data to a struct hdr
 
-	memcpy(&hdr, data, sizeof hdr);
-	data += sizeof hdr;
-	len -= sizeof hdr;
+	memcpy(&hdr, data, sizeof(hdr));
+	data += sizeof(hdr);
+	len -= sizeof(hdr);
 
 	// Drop packets with an unknown CTL flag
 
@@ -934,12 +934,12 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				pkt.data[1] = 0;
 				pkt.data[2] = 0;
 				pkt.data[3] = c->flags & 0x7;
-				print_packet(c->utcp, "send", &pkt, sizeof hdr + 4);
-				utcp->send(utcp, &pkt, sizeof hdr + 4);
+				print_packet(c->utcp, "send", &pkt, sizeof(hdr) + 4);
+				utcp->send(utcp, &pkt, sizeof(hdr) + 4);
 			} else {
 				pkt.hdr.aux = 0;
-				print_packet(c->utcp, "send", &pkt, sizeof hdr);
-				utcp->send(utcp, &pkt, sizeof hdr);
+				print_packet(c->utcp, "send", &pkt, sizeof(hdr));
+				utcp->send(utcp, &pkt, sizeof(hdr));
 			}
 		} else {
 			// No, we don't want your packets, send a RST back
@@ -1330,8 +1330,8 @@ reset:
 		hdr.seq = 0;
 		hdr.ctl = RST | ACK;
 	}
-	print_packet(utcp, "send", &hdr, sizeof hdr);
-	utcp->send(utcp, &hdr, sizeof hdr);
+	print_packet(utcp, "send", &hdr, sizeof(hdr));
+	utcp->send(utcp, &hdr, sizeof(hdr));
 	return 0;
 
 }
@@ -1454,8 +1454,8 @@ int utcp_abort(struct utcp_connection *c) {
 	hdr.wnd = 0;
 	hdr.ctl = RST;
 
-	print_packet(c->utcp, "send", &hdr, sizeof hdr);
-	c->utcp->send(c->utcp, &hdr, sizeof hdr);
+	print_packet(c->utcp, "send", &hdr, sizeof(hdr));
+	c->utcp->send(c->utcp, &hdr, sizeof(hdr));
 	return 0;
 }
 
@@ -1537,7 +1537,7 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 		return NULL;
 	}
 
-	struct utcp *utcp = calloc(1, sizeof *utcp);
+	struct utcp *utcp = calloc(1, sizeof(*utcp));
 	if(!utcp)
 		return NULL;
 

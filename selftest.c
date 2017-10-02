@@ -110,7 +110,7 @@ int main(int argc, char *argv[]) {
 	utcp_set_sndbuf(c, 10240);
 	char buf[20480] = "buf";
 
-	len = utcp_send(c, buf, sizeof buf);
+	len = utcp_send(c, buf, sizeof(buf));
 	if(len != 10240)
 		fprintf(stderr, "Error: utcp_send() returned %zd, expected 10240\n", len);
 
