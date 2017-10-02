@@ -14,4 +14,7 @@ selftest: utcp.o selftest.c
 clean:
 	rm -f *.o $(BIN)
 
-.PHONY: clean
+astyle:
+	astyle --options=.astylerc -nQ *.c *.h
+
+.PHONY: clean astyle

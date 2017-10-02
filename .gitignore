@@ -1,4 +1,6 @@
 .*
+!.astylerc
+!.gitignore
 *~
 *.o
 /test

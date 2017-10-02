@@ -45,12 +45,13 @@
 #endif
 
 #ifndef timersub
-#define timersub(a, b, r) do {\
-	(r)->tv_sec = (a)->tv_sec - (b)->tv_sec;\
-	(r)->tv_usec = (a)->tv_usec - (b)->tv_usec;\
-	if((r)->tv_usec < 0)\
-		(r)->tv_sec--, (r)->tv_usec += USEC_PER_SEC;\
-} while (0)
+#define timersub(a, b, r)\
+	do {\
+		(r)->tv_sec = (a)->tv_sec - (b)->tv_sec;\
+		(r)->tv_usec = (a)->tv_usec - (b)->tv_usec;\
+		if((r)->tv_usec < 0)\
+			(r)->tv_sec--, (r)->tv_usec += USEC_PER_SEC;\
+	} while (0)
 #endif
 
 static inline size_t max(size_t a, size_t b) {
@@ -69,6 +70,7 @@ static void debug(const char *format, ...) {
 
 static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, size_t len) {
 	struct hdr hdr;
+
 	if(len < sizeof(hdr)) {
 		debug("%p %s: short packet (%lu bytes)\n", utcp, dir, (unsigned long)len);
 		return;
@@ -76,14 +78,22 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 
 	memcpy(&hdr, pkt, sizeof(hdr));
 	debug("%p %s: len=%lu, src=%u dst=%u seq=%u ack=%u wnd=%u aux=%x ctl=", utcp, dir, (unsigned long)len, hdr.src, hdr.dst, hdr.seq, hdr.ack, hdr.wnd, hdr.aux);
-	if(hdr.ctl & SYN)
+
+	if(hdr.ctl & SYN) {
 		debug("SYN");
-	if(hdr.ctl & RST)
+	}
+
+	if(hdr.ctl & RST) {
 		debug("RST");
-	if(hdr.ctl & FIN)
+	}
+
+	if(hdr.ctl & FIN) {
 		debug("FIN");
-	if(hdr.ctl & ACK)
+	}
+
+	if(hdr.ctl & ACK) {
 		debug("ACK");
+	}
 
 	if(len > sizeof(hdr)) {
 		uint32_t datalen = len - sizeof(hdr);
@@ -95,6 +105,7 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 			*p++ = "0123456789ABCDEF"[data[i] >> 4];
 			*p++ = "0123456789ABCDEF"[data[i] & 15];
 		}
+
 		*p = 0;
 
 		debug(" data=%s", str);
@@ -109,19 +120,25 @@ static void print_packet(struct utcp *utcp, const char *dir, const void *pkt, si
 
 static void set_state(struct utcp_connection *c, enum state state) {
 	c->state = state;
-	if(state == ESTABLISHED)
+
+	if(state == ESTABLISHED) {
 		timerclear(&c->conn_timeout);
+	}
+
 	debug("%p new state: %s\n", c->utcp, strstate[state]);
 }
 
 static bool fin_wanted(struct utcp_connection *c, uint32_t seq) {
-	if(seq != c->snd.last)
+	if(seq != c->snd.last) {
 		return false;
+	}
+
 	switch(c->state) {
 	case FIN_WAIT_1:
 	case CLOSING:
 	case LAST_ACK:
 		return true;
+
 	default:
 		return false;
 	}
@@ -143,15 +160,19 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 	debug("buffer_put_at %lu %lu %lu\n", (unsigned long)buf->used, (unsigned long)offset, (unsigned long)len);
 
 	size_t required = offset + len;
+
 	if(required > buf->maxsize) {
-		if(offset >= buf->maxsize)
+		if(offset >= buf->maxsize) {
 			return 0;
+		}
+
 		len = buf->maxsize - offset;
 		required = buf->maxsize;
 	}
 
 	if(required > buf->size) {
 		size_t newsize = buf->size;
+
 		if(!newsize) {
 			newsize = required;
 		} else {
@@ -159,18 +180,27 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 				newsize *= 2;
 			} while(newsize < required);
 		}
-		if(newsize > buf->maxsize)
+
+		if(newsize > buf->maxsize) {
 			newsize = buf->maxsize;
+		}
+
 		char *newdata = realloc(buf->data, newsize);
-		if(!newdata)
+
+		if(!newdata) {
 			return -1;
+		}
+
 		buf->data = newdata;
 		buf->size = newsize;
 	}
 
 	memcpy(buf->data + offset, data, len);
-	if(required > buf->used)
+
+	if(required > buf->used) {
 		buf->used = required;
+	}
+
 	return len;
 }
 
@@ -180,33 +210,47 @@ static ssize_t buffer_put(struct buffer *buf, const void *data, size_t len) {
 
 // Get data from the buffer. data can be NULL.
 static ssize_t buffer_get(struct buffer *buf, void *data, size_t len) {
-	if(len > buf->used)
+	if(len > buf->used) {
 		len = buf->used;
-	if(data)
+	}
+
+	if(data) {
 		memcpy(data, buf->data, len);
-	if(len < buf->used)
+	}
+
+	if(len < buf->used) {
 		memmove(buf->data, buf->data + len, buf->used - len);
+	}
+
 	buf->used -= len;
 	return len;
 }
 
 // Copy data from the buffer without removing it.
 static ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t len) {
-	if(offset >= buf->used)
+	if(offset >= buf->used) {
 		return 0;
-	if(offset + len > buf->used)
+	}
+
+	if(offset + len > buf->used) {
 		len = buf->used - offset;
+	}
+
 	memcpy(data, buf->data + offset, len);
 	return len;
 }
 
 static bool buffer_init(struct buffer *buf, uint32_t len, uint32_t maxlen) {
 	memset(buf, 0, sizeof(*buf));
+
 	if(len) {
 		buf->data = malloc(len);
-		if(!buf->data)
+
+		if(!buf->data) {
 			return false;
+		}
 	}
+
 	buf->size = len;
 	buf->maxsize = maxlen;
 	return true;
@@ -234,15 +278,20 @@ static int compare(const void *va, const void *vb) {
 	assert(a->src && b->src);
 
 	int c = (int)a->src - (int)b->src;
-	if(c)
+
+	if(c) {
 		return c;
+	}
+
 	c = (int)a->dst - (int)b->dst;
 	return c;
 }
 
 static struct utcp_connection *find_connection(const struct utcp *utcp, uint16_t src, uint16_t dst) {
-	if(!utcp->nconnections)
+	if(!utcp->nconnections) {
 		return NULL;
+	}
+
 	struct utcp_connection key = {
 		.src = src,
 		.dst = dst,
@@ -279,27 +328,37 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 			errno = ENOMEM;
 			return NULL;
 		}
+
 		src = rand() | 0x8000;
-		while(find_connection(utcp, src, dst))
+
+		while(find_connection(utcp, src, dst)) {
 			src++;
+		}
 	}
 
 	// Allocate memory for the new connection
 
 	if(utcp->nconnections >= utcp->nallocated) {
-		if(!utcp->nallocated)
+		if(!utcp->nallocated) {
 			utcp->nallocated = 4;
-		else
+		} else {
 			utcp->nallocated *= 2;
+		}
+
 		struct utcp_connection **new_array = realloc(utcp->connections, utcp->nallocated * sizeof(*utcp->connections));
-		if(!new_array)
+
+		if(!new_array) {
 			return NULL;
+		}
+
 		utcp->connections = new_array;
 	}
 
 	struct utcp_connection *c = calloc(1, sizeof(*c));
-	if(!c)
+
+	if(!c) {
 		return NULL;
+	}
 
 	if(!buffer_init(&c->sndbuf, DEFAULT_SNDBUFSIZE, DEFAULT_MAXSNDBUFSIZE)) {
 		free(c);
@@ -337,10 +396,11 @@ static struct utcp_connection *allocate_connection(struct utcp *utcp, uint16_t s
 }
 
 static inline uint32_t absdiff(uint32_t a, uint32_t b) {
-	if(a > b)
+	if(a > b) {
 		return a - b;
-	else
+	} else {
 		return b - a;
+	}
 }
 
 // Update RTT variables. See RFC 6298.
@@ -362,8 +422,9 @@ static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
 		utcp->rto = utcp->srtt + max(utcp->rttvar, CLOCK_GRANULARITY);
 	}
 
-	if(utcp->rto > MAX_RTO)
+	if(utcp->rto > MAX_RTO) {
 		utcp->rto = MAX_RTO;
+	}
 
 	debug("rtt %u srtt %u rttvar %u rto %u\n", rtt, utcp->srtt, utcp->rttvar, utcp->rto);
 }
@@ -371,10 +432,12 @@ static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
 static void start_retransmit_timer(struct utcp_connection *c) {
 	gettimeofday(&c->rtrx_timeout, NULL);
 	c->rtrx_timeout.tv_usec += c->utcp->rto;
+
 	while(c->rtrx_timeout.tv_usec >= 1000000) {
 		c->rtrx_timeout.tv_usec -= 1000000;
 		c->rtrx_timeout.tv_sec++;
 	}
+
 	debug("timeout set to %lu.%06lu (%u)\n", c->rtrx_timeout.tv_sec, c->rtrx_timeout.tv_usec, c->utcp->rto);
 }
 
@@ -385,8 +448,10 @@ static void stop_retransmit_timer(struct utcp_connection *c) {
 
 struct utcp_connection *utcp_connect_ex(struct utcp *utcp, uint16_t dst, utcp_recv_t recv, void *priv, uint32_t flags) {
 	struct utcp_connection *c = allocate_connection(utcp, 0, dst);
-	if(!c)
+
+	if(!c) {
 		return NULL;
+	}
 
 	assert((flags & ~0xf) == 0);
 
@@ -447,14 +512,17 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 
 	assert(left >= 0);
 
-	if(cwndleft <= 0)
+	if(cwndleft <= 0) {
 		cwndleft = 0;
+	}
 
-	if(cwndleft < left)
+	if(cwndleft < left) {
 		left = cwndleft;
+	}
 
-	if(!left && !sendatleastone)
+	if(!left && !sendatleastone) {
 		return;
+	}
 
 	struct {
 		struct hdr hdr;
@@ -462,8 +530,10 @@ static void ack(struct utcp_connection *c, bool sendatleastone) {
 	} *pkt;
 
 	pkt = malloc(sizeof(pkt->hdr) + c->utcp->mtu);
-	if(!pkt)
+
+	if(!pkt) {
 		return;
+	}
 
 	pkt->hdr.src = c->src;
 	pkt->hdr.dst = c->dst;
@@ -515,9 +585,11 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		debug("Error: send() called on unconnected connection %p\n", c);
 		errno = ENOTCONN;
 		return -1;
+
 	case ESTABLISHED:
 	case CLOSE_WAIT:
 		break;
+
 	case FIN_WAIT_1:
 	case FIN_WAIT_2:
 	case CLOSING:
@@ -530,8 +602,9 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
 	// Exit early if we have nothing to send.
 
-	if(!len)
+	if(!len) {
 		return 0;
+	}
 
 	if(!data) {
 		errno = EFAULT;
@@ -541,6 +614,7 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	// Add data to send buffer.
 
 	len = buffer_put(&c->sndbuf, data, len);
+
 	if(len <= 0) {
 		errno = EWOULDBLOCK;
 		return 0;
@@ -548,12 +622,16 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
 	c->snd.last += len;
 	ack(c, false);
+
 	if(!is_reliable(c)) {
 		c->snd.una = c->snd.nxt = c->snd.last;
 		buffer_get(&c->sndbuf, NULL, c->sndbuf.used);
 	}
-	if(is_reliable(c) && !timerisset(&c->rtrx_timeout))
+
+	if(is_reliable(c) && !timerisset(&c->rtrx_timeout)) {
 		start_retransmit_timer(c);
+	}
+
 	return len;
 }
 
@@ -578,8 +656,10 @@ static void retransmit(struct utcp_connection *c) {
 	} *pkt;
 
 	pkt = malloc(sizeof(pkt->hdr) + c->utcp->mtu);
-	if(!pkt)
+
+	if(!pkt) {
 		return;
+	}
 
 	pkt->hdr.src = c->src;
 	pkt->hdr.dst = c->dst;
@@ -587,68 +667,75 @@ static void retransmit(struct utcp_connection *c) {
 	pkt->hdr.aux = 0;
 
 	switch(c->state) {
-		case SYN_SENT:
-			// Send our SYN again
-			pkt->hdr.seq = c->snd.iss;
-			pkt->hdr.ack = 0;
-			pkt->hdr.ctl = SYN;
-			pkt->hdr.aux = 0x0101;
-			pkt->data[0] = 1;
-			pkt->data[1] = 0;
-			pkt->data[2] = 0;
-			pkt->data[3] = c->flags & 0x7;
-			print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr) + 4);
-			utcp->send(utcp, pkt, sizeof(pkt->hdr) + 4);
-			break;
+	case SYN_SENT:
+		// Send our SYN again
+		pkt->hdr.seq = c->snd.iss;
+		pkt->hdr.ack = 0;
+		pkt->hdr.ctl = SYN;
+		pkt->hdr.aux = 0x0101;
+		pkt->data[0] = 1;
+		pkt->data[1] = 0;
+		pkt->data[2] = 0;
+		pkt->data[3] = c->flags & 0x7;
+		print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr) + 4);
+		utcp->send(utcp, pkt, sizeof(pkt->hdr) + 4);
+		break;
 
-		case SYN_RECEIVED:
-			// Send SYNACK again
-			pkt->hdr.seq = c->snd.nxt;
-			pkt->hdr.ack = c->rcv.nxt;
-			pkt->hdr.ctl = SYN | ACK;
-			print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr));
-			utcp->send(utcp, pkt, sizeof(pkt->hdr));
-			break;
+	case SYN_RECEIVED:
+		// Send SYNACK again
+		pkt->hdr.seq = c->snd.nxt;
+		pkt->hdr.ack = c->rcv.nxt;
+		pkt->hdr.ctl = SYN | ACK;
+		print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr));
+		utcp->send(utcp, pkt, sizeof(pkt->hdr));
+		break;
 
-		case ESTABLISHED:
-		case FIN_WAIT_1:
-		case CLOSE_WAIT:
-		case CLOSING:
-		case LAST_ACK:
-			// Send unacked data again.
-			pkt->hdr.seq = c->snd.una;
-			pkt->hdr.ack = c->rcv.nxt;
-			pkt->hdr.ctl = ACK;
-			uint32_t len = seqdiff(c->snd.last, c->snd.una);
-			if(len > utcp->mtu)
-				len = utcp->mtu;
-			if(fin_wanted(c, c->snd.una + len)) {
-				len--;
-				pkt->hdr.ctl |= FIN;
-			}
-			c->snd.nxt = c->snd.una + len;
-			c->snd.cwnd = utcp->mtu; // reduce cwnd on retransmit
-			buffer_copy(&c->sndbuf, pkt->data, 0, len);
-			print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr) + len);
-			utcp->send(utcp, pkt, sizeof(pkt->hdr) + len);
-			break;
+	case ESTABLISHED:
+	case FIN_WAIT_1:
+	case CLOSE_WAIT:
+	case CLOSING:
+	case LAST_ACK:
+		// Send unacked data again.
+		pkt->hdr.seq = c->snd.una;
+		pkt->hdr.ack = c->rcv.nxt;
+		pkt->hdr.ctl = ACK;
+		uint32_t len = seqdiff(c->snd.last, c->snd.una);
 
-		case CLOSED:
-		case LISTEN:
-		case TIME_WAIT:
-		case FIN_WAIT_2:
-			// We shouldn't need to retransmit anything in this state.
+		if(len > utcp->mtu) {
+			len = utcp->mtu;
+		}
+
+		if(fin_wanted(c, c->snd.una + len)) {
+			len--;
+			pkt->hdr.ctl |= FIN;
+		}
+
+		c->snd.nxt = c->snd.una + len;
+		c->snd.cwnd = utcp->mtu; // reduce cwnd on retransmit
+		buffer_copy(&c->sndbuf, pkt->data, 0, len);
+		print_packet(c->utcp, "rtrx", pkt, sizeof(pkt->hdr) + len);
+		utcp->send(utcp, pkt, sizeof(pkt->hdr) + len);
+		break;
+
+	case CLOSED:
+	case LISTEN:
+	case TIME_WAIT:
+	case FIN_WAIT_2:
+		// We shouldn't need to retransmit anything in this state.
 #ifdef UTCP_DEBUG
-			abort();
+		abort();
 #endif
-			stop_retransmit_timer(c);
-			goto cleanup;
+		stop_retransmit_timer(c);
+		goto cleanup;
 	}
 
 	start_retransmit_timer(c);
 	utcp->rto *= 2;
-	if(utcp->rto > MAX_RTO)
+
+	if(utcp->rto > MAX_RTO) {
 		utcp->rto = MAX_RTO;
+	}
+
 	c->rtt_start.tv_sec = 0; // invalidate RTT timer
 
 cleanup:
@@ -675,6 +762,7 @@ cleanup:
  */
 static void sack_consume(struct utcp_connection *c, size_t len) {
 	debug("sack_consume %lu\n", (unsigned long)len);
+
 	if(len > c->rcvbuf.used) {
 		debug("All SACK entries consumed");
 		c->sacks[0].len = 0;
@@ -683,7 +771,7 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
 
 	buffer_get(&c->rcvbuf, NULL, len);
 
-	for(int i = 0; i < NSACKS && c->sacks[i].len; ) {
+	for(int i = 0; i < NSACKS && c->sacks[i].len;) {
 		if(len < c->sacks[i].offset) {
 			c->sacks[i].offset -= len;
 			i++;
@@ -702,16 +790,19 @@ static void sack_consume(struct utcp_connection *c, size_t len) {
 		}
 	}
 
-	for(int i = 0; i < NSACKS && c->sacks[i].len; i++)
+	for(int i = 0; i < NSACKS && c->sacks[i].len; i++) {
 		debug("SACK[%d] offset %u len %u\n", i, c->sacks[i].offset, c->sacks[i].len);
+	}
 }
 
 static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, const void *data, size_t len) {
 	debug("out of order packet, offset %u\n", offset);
 	// Packet loss or reordering occured. Store the data in the buffer.
 	ssize_t rxd = buffer_put_at(&c->rcvbuf, offset, data, len);
-	if(rxd < 0 || (size_t)rxd < len)
+
+	if(rxd < 0 || (size_t)rxd < len) {
 		abort();
+	}
 
 	// Make note of where we put it.
 	for(int i = 0; i < NSACKS; i++) {
@@ -730,6 +821,7 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 				} else {
 					debug("SACK entries full, dropping packet\n");
 				}
+
 				break;
 			} else { // merge
 				debug("Merge with start of SACK entry at %d\n", i);
@@ -742,12 +834,14 @@ static void handle_out_of_order(struct utcp_connection *c, uint32_t offset, cons
 				c->sacks[i].len = offset + rxd - c->sacks[i].offset;
 				// TODO: handle potential merge with next entry
 			}
+
 			break;
 		}
 	}
 
-	for(int i = 0; i < NSACKS && c->sacks[i].len; i++)
+	for(int i = 0; i < NSACKS && c->sacks[i].len; i++) {
 		debug("SACK[%d] offset %u len %u\n", i, c->sacks[i].offset, c->sacks[i].len);
+	}
 }
 
 static void handle_in_order(struct utcp_connection *c, const void *data, size_t len) {
@@ -761,14 +855,16 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 
 	if(c->recv) {
 		ssize_t rxd = c->recv(c, data, len);
+
 		if(rxd < 0 || (size_t)rxd != len) {
 			// TODO: handle the application not accepting all data.
 			abort();
 		}
 	}
 
-	if(c->rcvbuf.used)
+	if(c->rcvbuf.used) {
 		sack_consume(c, len);
+	}
 
 	c->rcv.nxt += len;
 }
@@ -782,13 +878,16 @@ static void handle_incoming_data(struct utcp_connection *c, uint32_t seq, const 
 	}
 
 	uint32_t offset = seqdiff(seq, c->rcv.nxt);
-	if(offset + len > c->rcvbuf.maxsize)
-		abort();
 
-	if(offset)
+	if(offset + len > c->rcvbuf.maxsize) {
+		abort();
+	}
+
+	if(offset) {
 		handle_out_of_order(c, offset, data, len);
-	else
+	} else {
 		handle_in_order(c, data, len);
+	}
 }
 
 
@@ -798,8 +897,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		return -1;
 	}
 
-	if(!len)
+	if(!len) {
 		return 0;
+	}
 
 	if(!data) {
 		errno = EFAULT;
@@ -811,6 +911,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// Drop packets smaller than the header
 
 	struct hdr hdr;
+
 	if(len < sizeof(hdr)) {
 		errno = EBADMSG;
 		return -1;
@@ -834,6 +935,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	const uint8_t *init = NULL;
 
 	uint16_t aux = hdr.aux;
+
 	while(aux) {
 		size_t auxlen = 4 * (aux >> 8) & 0xf;
 		uint8_t auxtype = aux & 0xff;
@@ -849,8 +951,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				errno = EBADMSG;
 				return -1;
 			}
+
 			init = data;
 			break;
+
 		default:
 			errno = EBADMSG;
 			return -1;
@@ -859,8 +963,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		len -= auxlen;
 		data += auxlen;
 
-		if(!(aux & 0x800))
+		if(!(aux & 0x800)) {
 			break;
+		}
 
 		if(len < 2) {
 			errno = EBADMSG;
@@ -881,8 +986,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	if(!c) {
 		// Ignore RST packets
 
-		if(hdr.ctl & RST)
+		if(hdr.ctl & RST) {
 			return 0;
+		}
 
 		// Is it a SYN packet and are we LISTENing?
 
@@ -895,6 +1001,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 			// Try to allocate memory, otherwise send a RST back
 			c = allocate_connection(utcp, hdr.dst, hdr.src);
+
 			if(!c) {
 				len = 1;
 				goto reset;
@@ -906,6 +1013,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 					len = 1;
 					goto reset;
 				}
+
 				c->flags = init[3] & 0x7;
 			} else {
 				c->flags = UTCP_TCP;
@@ -928,6 +1036,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			pkt.hdr.seq = c->snd.iss;
 			pkt.hdr.wnd = c->rcv.wnd;
 			pkt.hdr.ctl = SYN | ACK;
+
 			if(init) {
 				pkt.hdr.aux = 0x0101;
 				pkt.data[0] = 1;
@@ -979,6 +1088,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	case LAST_ACK:
 	case TIME_WAIT:
 		break;
+
 	default:
 #ifdef UTCP_DEBUG
 		abort();
@@ -990,16 +1100,17 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	bool acceptable;
 
-	if(c->state == SYN_SENT)
+	if(c->state == SYN_SENT) {
 		acceptable = true;
-	else if(len == 0)
+	} else if(len == 0) {
 		acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0;
-	else {
+	} else {
 		int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
 
 		// cut already accepted front overlapping
 		if(rcv_offset < 0) {
-			acceptable = len > (size_t)-rcv_offset;
+			acceptable = len > (size_t) - rcv_offset;
+
 			if(acceptable) {
 				data -= rcv_offset;
 				len += rcv_offset;
@@ -1012,9 +1123,12 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(!acceptable) {
 		debug("Packet not acceptable, %u <= %u + %lu < %u\n", c->rcv.nxt, hdr.seq, (unsigned long)len, c->rcv.nxt + c->rcvbuf.maxsize);
+
 		// Ignore unacceptable RST packets.
-		if(hdr.ctl & RST)
+		if(hdr.ctl & RST) {
 			return 0;
+		}
+
 		// Otherwise, continue processing.
 		len = 0;
 	}
@@ -1027,9 +1141,12 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.last) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
 		debug("Packet ack seqno out of range, %u <= %u < %u\n", c->snd.una, hdr.ack, c->snd.una + c->sndbuf.used);
+
 		// Ignore unacceptable RST packets.
-		if(hdr.ctl & RST)
+		if(hdr.ctl & RST) {
 			return 0;
+		}
+
 		goto reset;
 	}
 
@@ -1038,46 +1155,65 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	if(hdr.ctl & RST) {
 		switch(c->state) {
 		case SYN_SENT:
-			if(!(hdr.ctl & ACK))
+			if(!(hdr.ctl & ACK)) {
 				return 0;
+			}
+
 			// The peer has refused our connection.
 			set_state(c, CLOSED);
 			errno = ECONNREFUSED;
-			if(c->recv)
+
+			if(c->recv) {
 				c->recv(c, NULL, 0);
+			}
+
 			return 0;
+
 		case SYN_RECEIVED:
-			if(hdr.ctl & ACK)
+			if(hdr.ctl & ACK) {
 				return 0;
+			}
+
 			// We haven't told the application about this connection yet. Silently delete.
 			free_connection(c);
 			return 0;
+
 		case ESTABLISHED:
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
 		case CLOSE_WAIT:
-			if(hdr.ctl & ACK)
+			if(hdr.ctl & ACK) {
 				return 0;
+			}
+
 			// The peer has aborted our connection.
 			set_state(c, CLOSED);
 			errno = ECONNRESET;
-			if(c->recv)
+
+			if(c->recv) {
 				c->recv(c, NULL, 0);
+			}
+
 			return 0;
+
 		case CLOSING:
 		case LAST_ACK:
 		case TIME_WAIT:
-			if(hdr.ctl & ACK)
+			if(hdr.ctl & ACK) {
 				return 0;
+			}
+
 			// As far as the application is concerned, the connection has already been closed.
 			// If it has called utcp_close() already, we can immediately free this connection.
 			if(c->reapable) {
 				free_connection(c);
 				return 0;
 			}
+
 			// Otherwise, immediately move to the CLOSED state.
 			set_state(c, CLOSED);
 			return 0;
+
 		default:
 #ifdef UTCP_DEBUG
 			abort();
@@ -1086,8 +1222,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
-	if(!(hdr.ctl & ACK))
+	if(!(hdr.ctl & ACK)) {
 		goto skip_ack;
+	}
 
 	// 3. Advance snd.una
 
@@ -1112,13 +1249,14 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		int32_t data_acked = advanced;
 
 		switch(c->state) {
-			case SYN_SENT:
-			case SYN_RECEIVED:
-				data_acked--;
-				break;
-			// TODO: handle FIN as well.
-			default:
-				break;
+		case SYN_SENT:
+		case SYN_RECEIVED:
+			data_acked--;
+			break;
+
+		// TODO: handle FIN as well.
+		default:
+			break;
 		}
 
 		assert(data_acked >= 0);
@@ -1126,39 +1264,49 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		int32_t bufused = seqdiff(c->snd.last, c->snd.una);
 		assert(data_acked <= bufused);
 
-		if(data_acked)
+		if(data_acked) {
 			buffer_get(&c->sndbuf, NULL, data_acked);
+		}
 
 		// Also advance snd.nxt if possible
-		if(seqdiff(c->snd.nxt, hdr.ack) < 0)
+		if(seqdiff(c->snd.nxt, hdr.ack) < 0) {
 			c->snd.nxt = hdr.ack;
+		}
 
 		c->snd.una = hdr.ack;
 
 		c->dupack = 0;
 		c->snd.cwnd += utcp->mtu;
-		if(c->snd.cwnd > c->sndbuf.maxsize)
+
+		if(c->snd.cwnd > c->sndbuf.maxsize) {
 			c->snd.cwnd = c->sndbuf.maxsize;
+		}
 
 		// Check if we have sent a FIN that is now ACKed.
 		switch(c->state) {
 		case FIN_WAIT_1:
-			if(c->snd.una == c->snd.last)
+			if(c->snd.una == c->snd.last) {
 				set_state(c, FIN_WAIT_2);
+			}
+
 			break;
+
 		case CLOSING:
 			if(c->snd.una == c->snd.last) {
 				gettimeofday(&c->conn_timeout, NULL);
 				c->conn_timeout.tv_sec += 60;
 				set_state(c, TIME_WAIT);
 			}
+
 			break;
+
 		default:
 			break;
 		}
 	} else {
 		if(!len && is_reliable(c)) {
 			c->dupack++;
+
 			if(c->dupack == 3) {
 				debug("Triplicate ACK\n");
 				//TODO: Resend one packet and go to fast recovery mode. See RFC 6582.
@@ -1175,10 +1323,12 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	if(advanced) {
 		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
-		if(c->snd.una == c->snd.last)
+
+		if(c->snd.una == c->snd.last) {
 			stop_retransmit_timer(c);
-		else if(is_reliable(c))
+		} else if(is_reliable(c)) {
 			start_retransmit_timer(c);
+		}
 	}
 
 skip_ack:
@@ -1187,14 +1337,18 @@ skip_ack:
 	if(hdr.ctl & SYN) {
 		switch(c->state) {
 		case SYN_SENT:
+
 			// This is a SYNACK. It should always have ACKed the SYN.
-			if(!advanced)
+			if(!advanced) {
 				goto reset;
+			}
+
 			c->rcv.irs = hdr.seq;
 			c->rcv.nxt = hdr.seq;
 			set_state(c, ESTABLISHED);
 			// TODO: notify application of this somehow.
 			break;
+
 		case SYN_RECEIVED:
 		case ESTABLISHED:
 		case FIN_WAIT_1:
@@ -1205,6 +1359,7 @@ skip_ack:
 		case TIME_WAIT:
 			// Ehm, no. We should never receive a second SYN.
 			return 0;
+
 		default:
 #ifdef UTCP_DEBUG
 			abort();
@@ -1220,12 +1375,14 @@ skip_ack:
 
 	if(c->state == SYN_RECEIVED) {
 		// This is the ACK after the SYNACK. It should always have ACKed the SYNACK.
-		if(!advanced)
+		if(!advanced) {
 			goto reset;
+		}
 
 		// Are we still LISTENing?
-		if(utcp->accept)
+		if(utcp->accept) {
 			utcp->accept(c, c->src);
+		}
 
 		if(c->state != ESTABLISHED) {
 			set_state(c, CLOSED);
@@ -1243,16 +1400,19 @@ skip_ack:
 			abort();
 #endif
 			return 0;
+
 		case ESTABLISHED:
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
 			break;
+
 		case CLOSE_WAIT:
 		case CLOSING:
 		case LAST_ACK:
 		case TIME_WAIT:
 			// Ehm no, We should never receive more data after a FIN.
 			goto reset;
+
 		default:
 #ifdef UTCP_DEBUG
 			abort();
@@ -1274,23 +1434,28 @@ skip_ack:
 			abort();
 #endif
 			break;
+
 		case ESTABLISHED:
 			set_state(c, CLOSE_WAIT);
 			break;
+
 		case FIN_WAIT_1:
 			set_state(c, CLOSING);
 			break;
+
 		case FIN_WAIT_2:
 			gettimeofday(&c->conn_timeout, NULL);
 			c->conn_timeout.tv_sec += 60;
 			set_state(c, TIME_WAIT);
 			break;
+
 		case CLOSE_WAIT:
 		case CLOSING:
 		case LAST_ACK:
 		case TIME_WAIT:
 			// Ehm, no. We should never receive a second FIN.
 			goto reset;
+
 		default:
 #ifdef UTCP_DEBUG
 			abort();
@@ -1322,6 +1487,7 @@ reset:
 	swap_ports(&hdr);
 	hdr.wnd = 0;
 	hdr.aux = 0;
+
 	if(hdr.ctl & ACK) {
 		hdr.seq = hdr.ack;
 		hdr.ctl = RST;
@@ -1330,6 +1496,7 @@ reset:
 		hdr.seq = 0;
 		hdr.ctl = RST | ACK;
 	}
+
 	print_packet(utcp, "send", &hdr, sizeof(hdr));
 	utcp->send(utcp, &hdr, sizeof(hdr));
 	return 0;
@@ -1338,6 +1505,7 @@ reset:
 
 int utcp_shutdown(struct utcp_connection *c, int dir) {
 	debug("%p shutdown %d at %u\n", c ? c->utcp : NULL, dir, c ? c->snd.last : 0);
+
 	if(!c) {
 		errno = EFAULT;
 		return -1;
@@ -1356,12 +1524,14 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 
 	// TCP does not have a provision for stopping incoming packets.
 	// The best we can do is to just ignore them.
-	if(dir == UTCP_SHUT_RD || dir == UTCP_SHUT_RDWR)
+	if(dir == UTCP_SHUT_RD || dir == UTCP_SHUT_RDWR) {
 		c->recv = NULL;
+	}
 
 	// The rest of the code deals with shutting down writes.
-	if(dir == UTCP_SHUT_RD)
+	if(dir == UTCP_SHUT_RD) {
 		return 0;
+	}
 
 	switch(c->state) {
 	case CLOSED:
@@ -1377,9 +1547,11 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	case ESTABLISHED:
 		set_state(c, FIN_WAIT_1);
 		break;
+
 	case FIN_WAIT_1:
 	case FIN_WAIT_2:
 		return 0;
+
 	case CLOSE_WAIT:
 		set_state(c, CLOSING);
 		break;
@@ -1393,14 +1565,19 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	c->snd.last++;
 
 	ack(c, false);
-	if(!timerisset(&c->rtrx_timeout))
+
+	if(!timerisset(&c->rtrx_timeout)) {
 		start_retransmit_timer(c);
+	}
+
 	return 0;
 }
 
 int utcp_close(struct utcp_connection *c) {
-	if(utcp_shutdown(c, SHUT_RDWR) && errno != ENOTCONN)
+	if(utcp_shutdown(c, SHUT_RDWR) && errno != ENOTCONN) {
 		return -1;
+	}
+
 	c->recv = NULL;
 	c->poll = NULL;
 	c->reapable = true;
@@ -1426,6 +1603,7 @@ int utcp_abort(struct utcp_connection *c) {
 	switch(c->state) {
 	case CLOSED:
 		return 0;
+
 	case LISTEN:
 	case SYN_SENT:
 	case CLOSING:
@@ -1472,8 +1650,10 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 
 	for(int i = 0; i < utcp->nconnections; i++) {
 		struct utcp_connection *c = utcp->connections[i];
-		if(!c)
+
+		if(!c) {
 			continue;
+		}
 
 		// delete connections that have been utcp_close()d.
 		if(c->state == CLOSED) {
@@ -1482,14 +1662,18 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 				free_connection(c);
 				i--;
 			}
+
 			continue;
 		}
 
 		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &now, <)) {
 			errno = ETIMEDOUT;
 			c->state = CLOSED;
-			if(c->recv)
+
+			if(c->recv) {
 				c->recv(c, NULL, 0);
+			}
+
 			continue;
 		}
 
@@ -1501,32 +1685,40 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 		if(c->poll) {
 			if((c->state == ESTABLISHED || c->state == CLOSE_WAIT)) {
 				uint32_t len =  buffer_free(&c->sndbuf);
-				if(len)
+
+				if(len) {
 					c->poll(c, len);
+				}
 			} else if(c->state == CLOSED) {
 				c->poll(c, 0);
 			}
 		}
 
-		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <))
+		if(timerisset(&c->conn_timeout) && timercmp(&c->conn_timeout, &next, <)) {
 			next = c->conn_timeout;
+		}
 
-		if(timerisset(&c->rtrx_timeout) && timercmp(&c->rtrx_timeout, &next, <))
+		if(timerisset(&c->rtrx_timeout) && timercmp(&c->rtrx_timeout, &next, <)) {
 			next = c->rtrx_timeout;
+		}
 	}
 
 	struct timeval diff;
+
 	timersub(&next, &now, &diff);
+
 	return diff;
 }
 
 bool utcp_is_active(struct utcp *utcp) {
-	if(!utcp)
+	if(!utcp) {
 		return false;
+	}
 
 	for(int i = 0; i < utcp->nconnections; i++)
-		if(utcp->connections[i]->state != CLOSED && utcp->connections[i]->state != TIME_WAIT)
+		if(utcp->connections[i]->state != CLOSED && utcp->connections[i]->state != TIME_WAIT) {
 			return true;
+		}
 
 	return false;
 }
@@ -1538,8 +1730,10 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 	}
 
 	struct utcp *utcp = calloc(1, sizeof(*utcp));
-	if(!utcp)
+
+	if(!utcp) {
 		return NULL;
+	}
 
 	utcp->accept = accept;
 	utcp->pre_accept = pre_accept;
@@ -1553,17 +1747,23 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 }
 
 void utcp_exit(struct utcp *utcp) {
-	if(!utcp)
+	if(!utcp) {
 		return;
+	}
+
 	for(int i = 0; i < utcp->nconnections; i++) {
 		struct utcp_connection *c = utcp->connections[i];
+
 		if(!c->reapable)
-			if(c->recv)
+			if(c->recv) {
 				c->recv(c, NULL, 0);
+			}
+
 		buffer_exit(&c->rcvbuf);
 		buffer_exit(&c->sndbuf);
 		free(c);
 	}
+
 	free(utcp->connections);
 	free(utcp);
 }
@@ -1574,24 +1774,33 @@ uint16_t utcp_get_mtu(struct utcp *utcp) {
 
 void utcp_set_mtu(struct utcp *utcp, uint16_t mtu) {
 	// TODO: handle overhead of the header
-	if(utcp)
+	if(utcp) {
 		utcp->mtu = mtu;
+	}
 }
 
 void utcp_reset_timers(struct utcp *utcp) {
-	if(!utcp)
+	if(!utcp) {
 		return;
+	}
+
 	struct timeval now, then;
+
 	gettimeofday(&now, NULL);
+
 	then = now;
+
 	then.tv_sec += utcp->timeout;
+
 	for(int i = 0; i < utcp->nconnections; i++) {
 		utcp->connections[i]->rtrx_timeout = now;
 		utcp->connections[i]->conn_timeout = then;
 		utcp->connections[i]->rtt_start.tv_sec = 0;
 	}
-	if(utcp->rto > START_RTO)
+
+	if(utcp->rto > START_RTO) {
 		utcp->rto = START_RTO;
+	}
 }
 
 int utcp_get_user_timeout(struct utcp *u) {
@@ -1599,8 +1808,9 @@ int utcp_get_user_timeout(struct utcp *u) {
 }
 
 void utcp_set_user_timeout(struct utcp *u, int timeout) {
-	if(u)
+	if(u) {
 		u->timeout = timeout;
+	}
 }
 
 size_t utcp_get_sndbuf(struct utcp_connection *c) {
@@ -1608,18 +1818,23 @@ size_t utcp_get_sndbuf(struct utcp_connection *c) {
 }
 
 size_t utcp_get_sndbuf_free(struct utcp_connection *c) {
-	if(c && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
+	if(c && (c->state == ESTABLISHED || c->state == CLOSE_WAIT)) {
 		return buffer_free(&c->sndbuf);
-	else
+	} else {
 		return 0;
+	}
 }
 
 void utcp_set_sndbuf(struct utcp_connection *c, size_t size) {
-	if(!c)
+	if(!c) {
 		return;
+	}
+
 	c->sndbuf.maxsize = size;
-	if(c->sndbuf.maxsize != size)
+
+	if(c->sndbuf.maxsize != size) {
 		c->sndbuf.maxsize = -1;
+	}
 }
 
 size_t utcp_get_rcvbuf(struct utcp_connection *c) {
@@ -1627,18 +1842,23 @@ size_t utcp_get_rcvbuf(struct utcp_connection *c) {
 }
 
 size_t utcp_get_rcvbuf_free(struct utcp_connection *c) {
-	if(c && (c->state == ESTABLISHED || c->state == CLOSE_WAIT))
+	if(c && (c->state == ESTABLISHED || c->state == CLOSE_WAIT)) {
 		return buffer_free(&c->rcvbuf);
-	else
+	} else {
 		return 0;
+	}
 }
 
 void utcp_set_rcvbuf(struct utcp_connection *c, size_t size) {
-	if(!c)
+	if(!c) {
 		return;
+	}
+
 	c->rcvbuf.maxsize = size;
-	if(c->rcvbuf.maxsize != size)
+
+	if(c->rcvbuf.maxsize != size) {
 		c->rcvbuf.maxsize = -1;
+	}
 }
 
 bool utcp_get_nodelay(struct utcp_connection *c) {
@@ -1646,8 +1866,9 @@ bool utcp_get_nodelay(struct utcp_connection *c) {
 }
 
 void utcp_set_nodelay(struct utcp_connection *c, bool nodelay) {
-	if(c)
+	if(c) {
 		c->nodelay = nodelay;
+	}
 }
 
 bool utcp_get_keepalive(struct utcp_connection *c) {
@@ -1655,8 +1876,9 @@ bool utcp_get_keepalive(struct utcp_connection *c) {
 }
 
 void utcp_set_keepalive(struct utcp_connection *c, bool keepalive) {
-	if(c)
+	if(c) {
 		c->keepalive = keepalive;
+	}
 }
 
 size_t utcp_get_outq(struct utcp_connection *c) {
@@ -1664,13 +1886,15 @@ size_t utcp_get_outq(struct utcp_connection *c) {
 }
 
 void utcp_set_recv_cb(struct utcp_connection *c, utcp_recv_t recv) {
-	if(c)
+	if(c) {
 		c->recv = recv;
+	}
 }
 
 void utcp_set_poll_cb(struct utcp_connection *c, utcp_poll_t poll) {
-	if(c)
+	if(c) {
 		c->poll = poll;
+	}
 }
 
 void utcp_set_accept_cb(struct utcp *utcp, utcp_accept_t accept, utcp_pre_accept_t pre_accept) {
