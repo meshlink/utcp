@@ -892,6 +892,8 @@ static void handle_incoming_data(struct utcp_connection *c, uint32_t seq, const 
 
 
 ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
+	const uint8_t *ptr = data;
+
 	if(!utcp) {
 		errno = EFAULT;
 		return -1;
@@ -919,8 +921,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	// Make a copy from the potentially unaligned data to a struct hdr
 
-	memcpy(&hdr, data, sizeof(hdr));
-	data += sizeof(hdr);
+	memcpy(&hdr, ptr, sizeof(hdr));
+	ptr += sizeof(hdr);
 	len -= sizeof(hdr);
 
 	// Drop packets with an unknown CTL flag
@@ -952,7 +954,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				return -1;
 			}
 
-			init = data;
+			init = ptr;
 			break;
 
 		default:
@@ -961,7 +963,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 
 		len -= auxlen;
-		data += auxlen;
+		ptr += auxlen;
 
 		if(!(aux & 0x800)) {
 			break;
@@ -972,9 +974,9 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			return -1;
 		}
 
-		memcpy(&aux, data, 2);
+		memcpy(&aux, ptr, 2);
 		len -= 2;
-		data += 2;
+		ptr += 2;
 	}
 
 	// Try to match the packet to an existing connection
@@ -1112,7 +1114,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 			acceptable = len > (size_t) - rcv_offset;
 
 			if(acceptable) {
-				data -= rcv_offset;
+				ptr -= rcv_offset;
 				len += rcv_offset;
 				hdr.seq -= rcv_offset;
 			}
@@ -1222,13 +1224,16 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		}
 	}
 
+	uint32_t advanced;
+
 	if(!(hdr.ctl & ACK)) {
+		advanced = 0;
 		goto skip_ack;
 	}
 
 	// 3. Advance snd.una
 
-	uint32_t advanced = seqdiff(hdr.ack, c->snd.una);
+	advanced = seqdiff(hdr.ack, c->snd.una);
 	prevrcvnxt = c->rcv.nxt;
 
 	if(advanced) {
@@ -1420,7 +1425,7 @@ skip_ack:
 			return 0;
 		}
 
-		handle_incoming_data(c, hdr.seq, data, len);
+		handle_incoming_data(c, hdr.seq, ptr, len);
 	}
 
 	// 7. Process FIN stuff

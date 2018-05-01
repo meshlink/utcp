@@ -1,4 +1,4 @@
-CFLAGS ?= -Og -Wall -g
+CFLAGS ?= -Og -Wall -W -pedantic -g
 CFLAGS += -std=c99 -DUTCP_DEBUG
 
 BIN = selftest test

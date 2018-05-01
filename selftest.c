@@ -13,9 +13,9 @@ struct utcp_connection *c;
 ssize_t do_recv(struct utcp_connection *x, const void *data, size_t len) {
 	if(!len) {
 		if(errno) {
-			fprintf(stderr, "%p Error: %s\n", x->utcp, strerror(errno));
+			fprintf(stderr, "%p Error: %s\n", (void *)x->utcp, strerror(errno));
 		} else {
-			fprintf(stderr, "%p Connection closed by peer\n", x->utcp);
+			fprintf(stderr, "%p Connection closed by peer\n", (void *)x->utcp);
 		}
 
 		if(x != c) {
