@@ -580,12 +580,12 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	switch(c->state) {
 	case CLOSED:
 	case LISTEN:
-	case SYN_SENT:
-	case SYN_RECEIVED:
 		debug("Error: send() called on unconnected connection %p\n", c);
 		errno = ENOTCONN;
 		return -1;
 
+	case SYN_SENT:
+	case SYN_RECEIVED:
 	case ESTABLISHED:
 	case CLOSE_WAIT:
 		break;
@@ -621,6 +621,12 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	}
 
 	c->snd.last += len;
+
+	// Don't send anything yet if the connection has not fully established yet
+
+	if (c->state == SYN_SENT || c->state == SYN_RECEIVED)
+		return len;
+
 	ack(c, false);
 
 	if(!is_reliable(c)) {
@@ -1350,7 +1356,12 @@ skip_ack:
 
 			c->rcv.irs = hdr.seq;
 			c->rcv.nxt = hdr.seq;
-			set_state(c, ESTABLISHED);
+			if(c->shut_wr) {
+				c->snd.last++;
+				set_state(c, FIN_WAIT_1);
+			} else {
+				set_state(c, ESTABLISHED);
+			}
 			// TODO: notify application of this somehow.
 			break;
 
@@ -1538,6 +1549,12 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 		return 0;
 	}
 
+	// Only process shutting down writes once.
+	if (c->shut_wr)
+		return 0;
+
+	c->shut_wr = true;
+
 	switch(c->state) {
 	case CLOSED:
 	case LISTEN:
@@ -1545,7 +1562,6 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 		return -1;
 
 	case SYN_SENT:
-		set_state(c, CLOSED);
 		return 0;
 
 	case SYN_RECEIVED:
@@ -1823,9 +1839,17 @@ size_t utcp_get_sndbuf(struct utcp_connection *c) {
 }
 
 size_t utcp_get_sndbuf_free(struct utcp_connection *c) {
-	if(c && (c->state == ESTABLISHED || c->state == CLOSE_WAIT)) {
+	if (!c)
+		return 0;
+
+	switch(c->state) {
+	case SYN_SENT:
+	case SYN_RECEIVED:
+	case ESTABLISHED:
+	case CLOSE_WAIT:
 		return buffer_free(&c->sndbuf);
-	} else {
+
+	default:
 		return 0;
 	}
 }

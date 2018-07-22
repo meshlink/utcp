@@ -152,6 +152,7 @@ struct utcp_connection {
 
 	bool nodelay;
 	bool keepalive;
+	bool shut_wr;
 
 	// Congestion avoidance state
 
