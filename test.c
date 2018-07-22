@@ -198,21 +198,28 @@ int main(int argc, char *argv[]) {
 	getaddrinfo(server ? NULL : argv[1], server ? argv[1] : argv[2], &hint, &ai);
 
 	if(!ai) {
+		debug("Could not lookup address: %s\n", strerror(errno));
 		return 1;
 	}
 
 	int s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 
 	if(s == -1) {
+		debug("Could not create socket: %s\n", strerror(errno));
 		return 1;
 	}
 
+	static const int one = 1;
+	setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+
 	if(server) {
 		if(bind(s, ai->ai_addr, ai->ai_addrlen)) {
+			debug("Could not bind: %s\n", strerror(errno));
 			return 1;
 		}
 	} else {
 		if(connect(s, ai->ai_addr, ai->ai_addrlen)) {
+			debug("Could not connect: %s\n", strerror(errno));
 			return 1;
 		}
 
@@ -224,6 +231,7 @@ int main(int argc, char *argv[]) {
 	struct utcp *u = utcp_init(server ? do_accept : NULL, NULL, do_send, &s);
 
 	if(!u) {
+		debug("Could not initialize UTCP\n");
 		return 1;
 	}
 
