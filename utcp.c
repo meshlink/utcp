@@ -1598,38 +1598,16 @@ int utcp_shutdown(struct utcp_connection *c, int dir) {
 	return 0;
 }
 
-// Closes all the opened connections
-void utcp_abort_all_connections(struct utcp *utcp) {
-	if(!utcp) {
-		return;
-	}
-
-	for(int i = 0; i < utcp->nconnections; i++) {
-		struct utcp_connection *c = utcp->connections[i];
-
-		if(c->recv) {
-			errno = 0;
-			c->recv(c, NULL, 0);
-		}
-
-		if(utcp_reset_connection(c) != -1) {
-			c->reapable = false;
-		}
-	}
-
-	return;
-}
-
-int utcp_reset_connection(struct utcp_connection *c) {
+static bool reset_connection(struct utcp_connection *c) {
 	if(!c) {
 		errno = EFAULT;
-		return -1;
+		return false;
 	}
 
 	if(c->reapable) {
 		debug("Error: abort() called on closed connection %p\n", c);
 		errno = EBADF;
-		return -1;
+		return false;
 	}
 
 	c->recv = NULL;
@@ -1637,7 +1615,7 @@ int utcp_reset_connection(struct utcp_connection *c) {
 
 	switch(c->state) {
 	case CLOSED:
-		return 0;
+		return true;
 
 	case LISTEN:
 	case SYN_SENT:
@@ -1645,7 +1623,7 @@ int utcp_reset_connection(struct utcp_connection *c) {
 	case LAST_ACK:
 	case TIME_WAIT:
 		set_state(c, CLOSED);
-		return 0;
+		return true;
 
 	case SYN_RECEIVED:
 	case ESTABLISHED:
@@ -1669,7 +1647,32 @@ int utcp_reset_connection(struct utcp_connection *c) {
 
 	print_packet(c->utcp, "send", &hdr, sizeof(hdr));
 	c->utcp->send(c->utcp, &hdr, sizeof(hdr));
-	return 0;
+	return true;
+}
+
+// Closes all the opened connections
+void utcp_abort_all_connections(struct utcp *utcp) {
+	if(!utcp) {
+		errno = EINVAL;
+		return;
+	}
+
+	for(int i = 0; i < utcp->nconnections; i++) {
+		struct utcp_connection *c = utcp->connections[i];
+
+		if(c->reapable || c->state == CLOSED) {
+			continue;
+		}
+
+		reset_connection(c);
+
+		if(c->recv) {
+			errno = 0;
+			c->recv(c, NULL, 0);
+		}
+	}
+
+	return;
 }
 
 int utcp_close(struct utcp_connection *c) {
@@ -1684,15 +1687,12 @@ int utcp_close(struct utcp_connection *c) {
 }
 
 int utcp_abort(struct utcp_connection *c) {
-	int utcp_reset_return;
-
-	utcp_reset_return = utcp_reset_connection(c);
-
-	if(utcp_reset_return != -1) {
-		c->reapable = true;
+	if(!reset_connection(c)) {
+		return -1;
 	}
 
-	return utcp_reset_return;
+	c->reapable = true;
+	return 0;
 }
 
 /* Handle timeouts.
