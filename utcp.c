@@ -1664,11 +1664,13 @@ void utcp_abort_all_connections(struct utcp *utcp) {
 			continue;
 		}
 
+		utcp_recv_t old_recv = c->recv;
+
 		reset_connection(c);
 
-		if(c->recv) {
+		if(old_recv) {
 			errno = 0;
-			c->recv(c, NULL, 0);
+			old_recv(c, NULL, 0);
 		}
 	}
 
