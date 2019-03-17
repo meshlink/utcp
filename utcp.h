@@ -99,6 +99,9 @@ extern size_t utcp_get_rcvbuf(struct utcp_connection *connection);
 extern void utcp_set_rcvbuf(struct utcp_connection *connection, size_t size);
 extern size_t utcp_get_rcvbuf_free(struct utcp_connection *connection);
 
+extern size_t utcp_get_sendq(struct utcp_connection *connection);
+extern size_t utcp_get_recvq(struct utcp_connection *connection);
+
 extern bool utcp_get_nodelay(struct utcp_connection *connection);
 extern void utcp_set_nodelay(struct utcp_connection *connection, bool nodelay);
 

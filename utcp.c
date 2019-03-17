@@ -1930,6 +1930,14 @@ void utcp_set_rcvbuf(struct utcp_connection *c, size_t size) {
 	}
 }
 
+size_t utcp_get_sendq(struct utcp_connection *c) {
+	return c->sndbuf.used;
+}
+
+size_t utcp_get_recvq(struct utcp_connection *c) {
+	return c->rcvbuf.used;
+}
+
 bool utcp_get_nodelay(struct utcp_connection *c) {
 	return c ? c->nodelay : false;
 }
