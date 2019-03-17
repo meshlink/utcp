@@ -15,6 +15,7 @@ clean:
 	rm -f *.o $(BIN)
 
 astyle:
+	@astyle --version | grep -q "Version 3" || (echo 'ERROR: astyle version 3 required!' 1>&2 && exit 1)
 	astyle --options=.astylerc -nQ *.c *.h
 
 .PHONY: clean astyle
