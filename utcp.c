@@ -1863,9 +1863,15 @@ void utcp_reset_timers(struct utcp *utcp) {
 	then.tv_sec += utcp->timeout;
 
 	for(int i = 0; i < utcp->nconnections; i++) {
-		utcp->connections[i]->rtrx_timeout = now;
-		utcp->connections[i]->conn_timeout = then;
-		utcp->connections[i]->rtt_start.tv_sec = 0;
+		struct utcp_connection *c = utcp->connections[i];
+
+		if(c->reapable) {
+			continue;
+		}
+
+		c->rtrx_timeout = now;
+		c->conn_timeout = then;
+		c->rtt_start.tv_sec = 0;
 	}
 
 	if(utcp->rto > START_RTO) {
@@ -1988,5 +1994,50 @@ void utcp_set_accept_cb(struct utcp *utcp, utcp_accept_t accept, utcp_pre_accept
 	if(utcp) {
 		utcp->accept = accept;
 		utcp->pre_accept = pre_accept;
+	}
+}
+
+void utcp_expect_data(struct utcp_connection *c, bool expect) {
+	if(!c || c->reapable) {
+		return;
+	}
+
+	if(!(c->state == ESTABLISHED || c->state == FIN_WAIT_1 || c->state == FIN_WAIT_2)) {
+		return;
+	}
+
+	if(expect) {
+		// If we expect data, start the connection timer.
+		if(!timerisset(&c->conn_timeout)) {
+			gettimeofday(&c->conn_timeout, NULL);
+			c->conn_timeout.tv_sec += c->utcp->timeout;
+		}
+	} else {
+		// If we want to cancel expecting data, only clear the timer when there is no unACKed data.
+		if(c->snd.una == c->snd.last) {
+			timerclear(&c->conn_timeout);
+		}
+	}
+}
+
+void utcp_offline(struct utcp *utcp, bool offline) {
+	for(int i = 0; i < utcp->nconnections; i++) {
+		struct utcp_connection *c = utcp->connections[i];
+
+		if(!c->reapable) {
+			utcp_expect_data(c, offline);
+
+			// If we are online again, reset the retransmission timers, but keep the connection timeout as it is,
+			// to prevent peers toggling online/offline state frequently from keeping connections alive
+			// if there is no progress in sending actual data.
+			if(!offline) {
+				gettimeofday(&utcp->connections[i]->rtrx_timeout, NULL);
+				utcp->connections[i]->rtt_start.tv_sec = 0;
+			}
+		}
+	}
+
+	if(!offline && utcp->rto > START_RTO) {
+		utcp->rto = START_RTO;
 	}
 }

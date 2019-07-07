@@ -89,6 +89,8 @@ extern void utcp_set_mtu(struct utcp *utcp, uint16_t mtu);
 
 extern void utcp_reset_timers(struct utcp *utcp);
 
+extern void utcp_offline(struct utcp *utcp, bool offline);
+
 // Per-socket options
 
 extern size_t utcp_get_sndbuf(struct utcp_connection *connection);
@@ -109,5 +111,7 @@ extern bool utcp_get_keepalive(struct utcp_connection *connection);
 extern void utcp_set_keepalive(struct utcp_connection *connection, bool keepalive);
 
 extern size_t utcp_get_outq(struct utcp_connection *connection);
+
+extern void utcp_expect_data(struct utcp_connection *connection, bool expect);
 
 #endif
