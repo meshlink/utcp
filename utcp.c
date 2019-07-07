@@ -639,6 +639,11 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		start_retransmit_timer(c);
 	}
 
+	if(is_reliable(c) && !timerisset(&c->conn_timeout)) {
+		gettimeofday(&c->conn_timeout, NULL);
+		c->conn_timeout.tv_sec += c->utcp->timeout;
+	}
+
 	return len;
 }
 
@@ -1334,12 +1339,13 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// 4. Update timers
 
 	if(advanced) {
-		timerclear(&c->conn_timeout); // It will be set anew in utcp_timeout() if c->snd.una != c->snd.nxt.
-
 		if(c->snd.una == c->snd.last) {
 			stop_retransmit_timer(c);
+			timerclear(&c->conn_timeout);
 		} else if(is_reliable(c)) {
 			start_retransmit_timer(c);
+			gettimeofday(&c->conn_timeout, NULL);
+			c->conn_timeout.tv_sec += utcp->timeout;
 		}
 	}
 
@@ -1732,6 +1738,10 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 
 			if(c->recv) {
 				c->recv(c, NULL, 0);
+			}
+
+			if(c->poll) {
+				c->poll(c, 0);
 			}
 
 			continue;
