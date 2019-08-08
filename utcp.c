@@ -611,6 +611,20 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 		return -1;
 	}
 
+	// Check if we need to be able to buffer all data
+
+	if(c->flags & UTCP_NO_PARTIAL) {
+		if(len > buffer_free(&c->sndbuf)) {
+			if(len > c->sndbuf.maxsize) {
+				errno = EMSGSIZE;
+				return -1;
+			} else {
+				errno = EWOULDBLOCK;
+				return 0;
+			}
+		}
+	}
+
 	// Add data to send buffer.
 
 	len = buffer_put(&c->sndbuf, data, len);

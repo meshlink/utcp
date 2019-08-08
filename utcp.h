@@ -49,6 +49,7 @@ struct utcp_connection;
 #define UTCP_RELIABLE 2
 #define UTCP_FRAMED 4
 #define UTCP_DROP_LATE 8
+#define UTCP_NO_PARTIAL 16
 
 #define UTCP_TCP 3
 #define UTCP_UDP 0
