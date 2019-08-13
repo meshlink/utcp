@@ -453,7 +453,7 @@ struct utcp_connection *utcp_connect_ex(struct utcp *utcp, uint16_t dst, utcp_re
 		return NULL;
 	}
 
-	assert((flags & ~0xf) == 0);
+	assert((flags & ~0x1f) == 0);
 
 	c->flags = flags;
 	c->recv = recv;
