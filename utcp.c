@@ -1195,6 +1195,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				c->recv(c, NULL, 0);
 			}
 
+			if(c->poll && !c->reapable) {
+				c->poll(c, 0);
+			}
+
 			return 0;
 
 		case SYN_RECEIVED:
@@ -1220,6 +1224,10 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 			if(c->recv) {
 				c->recv(c, NULL, 0);
+			}
+
+			if(c->poll && !c->reapable) {
+				c->poll(c, 0);
 			}
 
 			return 0;
@@ -1506,7 +1514,7 @@ skip_ack:
 		c->rcv.nxt++;
 		len++;
 
-		// Inform the application that the peer closed the connection.
+		// Inform the application that the peer closed its end of the connection.
 		if(c->recv) {
 			errno = 0;
 			c->recv(c, NULL, 0);
@@ -1685,12 +1693,18 @@ void utcp_abort_all_connections(struct utcp *utcp) {
 		}
 
 		utcp_recv_t old_recv = c->recv;
+		utcp_poll_t old_poll = c->poll;
 
 		reset_connection(c);
 
 		if(old_recv) {
 			errno = 0;
 			old_recv(c, NULL, 0);
+		}
+
+		if(old_poll && !c->reapable) {
+			errno = 0;
+			old_poll(c, 0);
 		}
 	}
 
@@ -1754,7 +1768,7 @@ struct timeval utcp_timeout(struct utcp *utcp) {
 				c->recv(c, NULL, 0);
 			}
 
-			if(c->poll) {
+			if(c->poll && !c->reapable) {
 				c->poll(c, 0);
 			}
 
@@ -1838,10 +1852,15 @@ void utcp_exit(struct utcp *utcp) {
 	for(int i = 0; i < utcp->nconnections; i++) {
 		struct utcp_connection *c = utcp->connections[i];
 
-		if(!c->reapable)
+		if(!c->reapable) {
 			if(c->recv) {
 				c->recv(c, NULL, 0);
 			}
+
+			if(c->poll && !c->reapable) {
+				c->poll(c, 0);
+			}
+		}
 
 		buffer_exit(&c->rcvbuf);
 		buffer_exit(&c->sndbuf);
