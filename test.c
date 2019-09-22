@@ -31,6 +31,7 @@ double dropout;
 long total_out;
 long total_in;
 FILE *reference;
+long mtu = 1300;
 
 char *reorder_data;
 size_t reorder_len;
@@ -178,6 +179,10 @@ int main(int argc, char *argv[]) {
 		read_size = atoi(getenv("READ_SIZE"));
 	}
 
+	if(getenv("MTU")) {
+		mtu = atoi(getenv("MTU"));
+	}
+
 	char *reference_filename = getenv("REFERENCE");
 
 	if(reference_filename) {
@@ -235,7 +240,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	utcp_set_mtu(u, 1300);
+	utcp_set_mtu(u, mtu);
 	utcp_set_user_timeout(u, 10);
 
 	if(!server) {
