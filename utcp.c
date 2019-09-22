@@ -627,11 +627,17 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 
 	// Add data to send buffer.
 
-	len = buffer_put(&c->sndbuf, data, len);
+	if(is_reliable(c) || (c->state != SYN_SENT && c->state != SYN_RECEIVED)) {
+		len = buffer_put(&c->sndbuf, data, len);
+	}
 
 	if(len <= 0) {
-		errno = EWOULDBLOCK;
-		return 0;
+		if(is_reliable(c)) {
+			errno = EWOULDBLOCK;
+			return 0;
+		} else {
+			return len;
+		}
 	}
 
 	c->snd.last += len;
@@ -1126,39 +1132,41 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	// 1b. Drop packets with a sequence number not in our receive window.
 
-	bool acceptable;
+	if(is_reliable(c)) {
+		bool acceptable;
 
-	if(c->state == SYN_SENT) {
-		acceptable = true;
-	} else if(len == 0) {
-		acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0;
-	} else {
-		int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
-
-		// cut already accepted front overlapping
-		if(rcv_offset < 0) {
-			acceptable = len > (size_t) - rcv_offset;
-
-			if(acceptable) {
-				ptr -= rcv_offset;
-				len += rcv_offset;
-				hdr.seq -= rcv_offset;
-			}
+		if(c->state == SYN_SENT) {
+			acceptable = true;
+		} else if(len == 0) {
+			acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0;
 		} else {
-			acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt) + len <= c->rcvbuf.maxsize;
+			int32_t rcv_offset = seqdiff(hdr.seq, c->rcv.nxt);
+
+			// cut already accepted front overlapping
+			if(rcv_offset < 0) {
+				acceptable = len > (size_t) - rcv_offset;
+
+				if(acceptable) {
+					ptr -= rcv_offset;
+					len += rcv_offset;
+					hdr.seq -= rcv_offset;
+				}
+			} else {
+				acceptable = seqdiff(hdr.seq, c->rcv.nxt) >= 0 && seqdiff(hdr.seq, c->rcv.nxt) + len <= c->rcvbuf.maxsize;
+			}
 		}
-	}
 
-	if(!acceptable) {
-		debug("Packet not acceptable, %u <= %u + %lu < %u\n", c->rcv.nxt, hdr.seq, (unsigned long)len, c->rcv.nxt + c->rcvbuf.maxsize);
+		if(!acceptable) {
+			debug("Packet not acceptable, %u <= %u + %lu < %u\n", c->rcv.nxt, hdr.seq, (unsigned long)len, c->rcv.nxt + c->rcvbuf.maxsize);
 
-		// Ignore unacceptable RST packets.
-		if(hdr.ctl & RST) {
-			return 0;
+			// Ignore unacceptable RST packets.
+			if(hdr.ctl & RST) {
+				return 0;
+			}
+
+			// Otherwise, continue processing.
+			len = 0;
 		}
-
-		// Otherwise, continue processing.
-		len = 0;
 	}
 
 	c->snd.wnd = hdr.wnd; // TODO: move below
@@ -1166,6 +1174,12 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// 1c. Drop packets with an invalid ACK.
 	// ackno should not roll back, and it should also not be bigger than what we ever could have sent
 	// (= snd.una + c->sndbuf.used).
+
+	if(!is_reliable(c)) {
+		if(hdr.ack != c->snd.last && c->state >= ESTABLISHED) {
+			hdr.ack = c->snd.una;
+		}
+	}
 
 	if(hdr.ctl & ACK && (seqdiff(hdr.ack, c->snd.last) > 0 || seqdiff(hdr.ack, c->snd.una) < 0)) {
 		debug("Packet ack seqno out of range, %u <= %u < %u\n", c->snd.una, hdr.ack, c->snd.una + c->sndbuf.used);
@@ -1472,7 +1486,7 @@ skip_ack:
 
 	// 7. Process FIN stuff
 
-	if((hdr.ctl & FIN) && hdr.seq + len == c->rcv.nxt) {
+	if((hdr.ctl & FIN) && (!is_reliable(c) || hdr.seq + len == c->rcv.nxt)) {
 		switch(c->state) {
 		case SYN_SENT:
 		case SYN_RECEIVED:
@@ -1527,7 +1541,10 @@ skip_ack:
 	// - or we got an ack, so we should maybe send a bit more data
 	//   -> sendatleastone = false
 
-	ack(c, len || prevrcvnxt != c->rcv.nxt);
+	if(is_reliable(c) || hdr.ctl & SYN || hdr.ctl & FIN) {
+		ack(c, len || prevrcvnxt != c->rcv.nxt);
+	}
+
 	return 0;
 
 reset:
