@@ -1011,6 +1011,8 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		ptr += 2;
 	}
 
+	bool has_data = len;
+
 	// Try to match the packet to an existing connection
 
 	struct utcp_connection *c = find_connection(utcp, hdr.dst, hdr.src);
@@ -1105,8 +1107,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 
 	// It is for an existing connection.
 
-	uint32_t prevrcvnxt = c->rcv.nxt;
-
 	// 1. Drop invalid packets.
 
 	// 1a. Drop packets that should not happen in our current state.
@@ -1130,7 +1130,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		break;
 	}
 
-	// 1b. Drop packets with a sequence number not in our receive window.
+	// 1b. Discard data that is not in our receive window.
 
 	if(is_reliable(c)) {
 		bool acceptable;
@@ -1282,7 +1282,6 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 	// 3. Advance snd.una
 
 	advanced = seqdiff(hdr.ack, c->snd.una);
-	prevrcvnxt = c->rcv.nxt;
 
 	if(advanced) {
 		// RTT measurement
@@ -1536,13 +1535,13 @@ skip_ack:
 	}
 
 	// Now we send something back if:
-	// - we advanced rcv.nxt (ie, we got some data that needs to be ACKed)
+	// - we received data, so we have to send back an ACK
 	//   -> sendatleastone = true
 	// - or we got an ack, so we should maybe send a bit more data
 	//   -> sendatleastone = false
 
 	if(is_reliable(c) || hdr.ctl & SYN || hdr.ctl & FIN) {
-		ack(c, len || prevrcvnxt != c->rcv.nxt);
+		ack(c, has_data);
 	}
 
 	return 0;
