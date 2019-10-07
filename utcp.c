@@ -1011,7 +1011,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		ptr += 2;
 	}
 
-	bool has_data = len;
+	bool has_data = len || (hdr.ctl & (SYN | FIN));
 
 	// Try to match the packet to an existing connection
 
