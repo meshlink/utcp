@@ -1346,7 +1346,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 		case CLOSING:
 			if(c->snd.una == c->snd.last) {
 				gettimeofday(&c->conn_timeout, NULL);
-				c->conn_timeout.tv_sec += 60;
+				c->conn_timeout.tv_sec += utcp->timeout;
 				set_state(c, TIME_WAIT);
 			}
 
@@ -1505,7 +1505,7 @@ skip_ack:
 
 		case FIN_WAIT_2:
 			gettimeofday(&c->conn_timeout, NULL);
-			c->conn_timeout.tv_sec += 60;
+			c->conn_timeout.tv_sec += utcp->timeout;
 			set_state(c, TIME_WAIT);
 			break;
 
