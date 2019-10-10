@@ -1055,6 +1055,7 @@ ssize_t utcp_recv(struct utcp *utcp, const void *data, size_t len) {
 				c->flags = UTCP_TCP;
 			}
 
+synack:
 			// Return SYN+ACK, go to SYN_RECEIVED state
 			c->snd.wnd = hdr.wnd;
 			c->rcv.irs = hdr.seq;
@@ -1410,6 +1411,9 @@ skip_ack:
 			break;
 
 		case SYN_RECEIVED:
+			// This is a retransmit of a SYN, send back the SYNACK.
+			goto synack;
+
 		case ESTABLISHED:
 		case FIN_WAIT_1:
 		case FIN_WAIT_2:
