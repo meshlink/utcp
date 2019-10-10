@@ -1918,8 +1918,14 @@ void utcp_reset_timers(struct utcp *utcp) {
 			continue;
 		}
 
-		c->rtrx_timeout = now;
-		c->conn_timeout = then;
+		if(timerisset(&c->rtrx_timeout)) {
+			c->rtrx_timeout = now;
+		}
+
+		if(timerisset(&c->conn_timeout)) {
+			c->conn_timeout = then;
+		}
+
 		c->rtt_start.tv_sec = 0;
 	}
 
@@ -2070,19 +2076,24 @@ void utcp_expect_data(struct utcp_connection *c, bool expect) {
 }
 
 void utcp_offline(struct utcp *utcp, bool offline) {
+	struct timeval now;
+	gettimeofday(&now, NULL);
+
 	for(int i = 0; i < utcp->nconnections; i++) {
 		struct utcp_connection *c = utcp->connections[i];
 
-		if(!c->reapable) {
-			utcp_expect_data(c, offline);
+		if(c->reapable) {
+			continue;
+		}
 
-			// If we are online again, reset the retransmission timers, but keep the connection timeout as it is,
-			// to prevent peers toggling online/offline state frequently from keeping connections alive
-			// if there is no progress in sending actual data.
-			if(!offline) {
-				gettimeofday(&utcp->connections[i]->rtrx_timeout, NULL);
-				utcp->connections[i]->rtt_start.tv_sec = 0;
+		utcp_expect_data(c, offline);
+
+		if(!offline) {
+			if(timerisset(&c->rtrx_timeout)) {
+				c->rtrx_timeout = now;
 			}
+
+			utcp->connections[i]->rtt_start.tv_sec = 0;
 		}
 	}
 
