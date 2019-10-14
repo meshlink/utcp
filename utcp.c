@@ -415,12 +415,12 @@ static void update_rtt(struct utcp_connection *c, uint32_t rtt) {
 	if(!utcp->srtt) {
 		utcp->srtt = rtt;
 		utcp->rttvar = rtt / 2;
-		utcp->rto = rtt + max(2 * rtt, CLOCK_GRANULARITY);
 	} else {
 		utcp->rttvar = (utcp->rttvar * 3 + absdiff(utcp->srtt, rtt)) / 4;
 		utcp->srtt = (utcp->srtt * 7 + rtt) / 8;
-		utcp->rto = utcp->srtt + max(utcp->rttvar, CLOCK_GRANULARITY);
 	}
+
+	utcp->rto = utcp->srtt + max(4 * utcp->rttvar, CLOCK_GRANULARITY);
 
 	if(utcp->rto > MAX_RTO) {
 		utcp->rto = MAX_RTO;
