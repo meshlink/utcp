@@ -1314,8 +1314,10 @@ synack:
 
 		assert(data_acked >= 0);
 
+#ifndef NDEBUG
 		int32_t bufused = seqdiff(c->snd.last, c->snd.una);
 		assert(data_acked <= bufused);
+#endif
 
 		if(data_acked) {
 			buffer_get(&c->sndbuf, NULL, data_acked);
