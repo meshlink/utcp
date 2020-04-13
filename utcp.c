@@ -816,7 +816,6 @@ ssize_t utcp_send(struct utcp_connection *c, const void *data, size_t len) {
 	if(!is_reliable(c)) {
 		c->snd.una = c->snd.nxt = c->snd.last;
 		buffer_discard(&c->sndbuf, c->sndbuf.used);
-		c->do_poll = true;
 	}
 
 	if(is_reliable(c) && !timespec_isset(&c->rtrx_timeout)) {
@@ -1594,7 +1593,10 @@ synack:
 
 		if(data_acked) {
 			buffer_discard(&c->sndbuf, data_acked);
-			c->do_poll = true;
+
+			if(is_reliable(c)) {
+				c->do_poll = true;
+			}
 		}
 
 		// Also advance snd.nxt if possible
@@ -2318,7 +2320,7 @@ void utcp_set_sndbuf(struct utcp_connection *c, size_t size) {
 		c->sndbuf.maxsize = -1;
 	}
 
-	c->do_poll = buffer_free(&c->sndbuf);
+	c->do_poll = is_reliable(c) && buffer_free(&c->sndbuf);
 }
 
 size_t utcp_get_rcvbuf(struct utcp_connection *c) {
@@ -2386,7 +2388,7 @@ void utcp_set_recv_cb(struct utcp_connection *c, utcp_recv_t recv) {
 void utcp_set_poll_cb(struct utcp_connection *c, utcp_poll_t poll) {
 	if(c) {
 		c->poll = poll;
-		c->do_poll = buffer_free(&c->sndbuf);
+		c->do_poll = is_reliable(c) && buffer_free(&c->sndbuf);
 	}
 }
 
