@@ -1113,11 +1113,14 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 			size_t offset = len;
 			len = c->sacks[0].offset + c->sacks[0].len;
 			size_t remainder = len - offset;
-			ssize_t rxd = buffer_call(&c->rcvbuf, c->recv, c, offset, remainder);
 
-			if(rxd != (ssize_t)remainder) {
-				// TODO: handle the application not accepting all data.
-				abort();
+			if(c->recv) {
+				ssize_t rxd = buffer_call(&c->rcvbuf, c->recv, c, offset, remainder);
+
+				if(rxd != (ssize_t)remainder) {
+					// TODO: handle the application not accepting all data.
+					abort();
+				}
 			}
 		}
 	}
@@ -1132,7 +1135,10 @@ static void handle_in_order(struct utcp_connection *c, const void *data, size_t 
 static void handle_unreliable(struct utcp_connection *c, const struct hdr *hdr, const void *data, size_t len) {
 	// Fast path for unfragmented packets
 	if(!hdr->wnd && !(hdr->ctl & MF)) {
-		c->recv(c, data, len);
+		if(c->recv) {
+			c->recv(c, data, len);
+		}
+
 		c->rcv.nxt = hdr->seq + len;
 		return;
 	}
@@ -1159,7 +1165,7 @@ static void handle_unreliable(struct utcp_connection *c, const struct hdr *hdr, 
 	}
 
 	// Send the packet if it's the final fragment
-	if(!(hdr->ctl & MF)) {
+	if(!(hdr->ctl & MF) && c->recv) {
 		buffer_call(&c->rcvbuf, c->recv, c, 0, hdr->wnd + len);
 	}
 
