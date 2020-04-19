@@ -890,6 +890,10 @@ static void retransmit(struct utcp_connection *c) {
 
 	struct utcp *utcp = c->utcp;
 
+	if (utcp->retransmit) {
+		utcp->retransmit(c);
+	}
+
 	struct {
 		struct hdr hdr;
 		uint8_t data[];
@@ -2445,6 +2449,10 @@ void utcp_offline(struct utcp *utcp, bool offline) {
 			}
 		}
 	}
+}
+
+void utcp_set_retransmit_cb(struct utcp *utcp, utcp_retransmit_t retransmit) {
+	utcp->retransmit = retransmit;
 }
 
 void utcp_set_clock_granularity(long granularity) {
