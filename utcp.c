@@ -847,13 +847,7 @@ static void fast_retransmit(struct utcp_connection *c) {
 	struct {
 		struct hdr hdr;
 		uint8_t data[];
-	} *pkt;
-
-	pkt = malloc(c->utcp->mtu);
-
-	if(!pkt) {
-		return;
-	}
+	} *pkt = c->utcp->pkt;
 
 	pkt->hdr.src = c->src;
 	pkt->hdr.dst = c->dst;
@@ -885,8 +879,6 @@ static void fast_retransmit(struct utcp_connection *c) {
 	default:
 		break;
 	}
-
-	free(pkt);
 }
 
 static void retransmit(struct utcp_connection *c) {
