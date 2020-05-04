@@ -890,7 +890,7 @@ static void retransmit(struct utcp_connection *c) {
 
 	struct utcp *utcp = c->utcp;
 
-	if (utcp->retransmit) {
+	if(utcp->retransmit) {
 		utcp->retransmit(c);
 	}
 
@@ -1352,6 +1352,8 @@ synack:
 				print_packet(c, "send", &pkt, sizeof(hdr));
 				utcp->send(utcp, &pkt, sizeof(hdr));
 			}
+
+			start_retransmit_timer(c);
 		} else {
 			// No, we don't want your packets, send a RST back
 			len = 1;
@@ -1713,7 +1715,7 @@ skip_ack:
 			}
 
 			c->rcv.irs = hdr.seq;
-			c->rcv.nxt = hdr.seq;
+			c->rcv.nxt = hdr.seq + 1;
 
 			if(c->shut_wr) {
 				c->snd.last++;
@@ -1722,7 +1724,6 @@ skip_ack:
 				set_state(c, ESTABLISHED);
 			}
 
-			// TODO: notify application of this somehow.
 			break;
 
 		case SYN_RECEIVED:
@@ -1736,8 +1737,8 @@ skip_ack:
 		case CLOSING:
 		case LAST_ACK:
 		case TIME_WAIT:
-			// Ehm, no. We should never receive a second SYN.
-			return 0;
+			// This could be a retransmission. Ignore the SYN flag, but send an ACK back.
+			break;
 
 		default:
 #ifdef UTCP_DEBUG
@@ -1745,9 +1746,6 @@ skip_ack:
 #endif
 			return 0;
 		}
-
-		// SYN counts as one sequence number
-		c->rcv.nxt++;
 	}
 
 	// 6. Process new data
