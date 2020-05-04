@@ -2169,6 +2169,13 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 		return NULL;
 	}
 
+	utcp_set_mtu(utcp, DEFAULT_MTU);
+
+	if(!utcp->pkt) {
+		free(utcp);
+		return NULL;
+	}
+
 	if(!CLOCK_GRANULARITY) {
 		struct timespec res;
 		clock_getres(UTCP_CLOCK, &res);
@@ -2179,7 +2186,6 @@ struct utcp *utcp_init(utcp_accept_t accept, utcp_pre_accept_t pre_accept, utcp_
 	utcp->pre_accept = pre_accept;
 	utcp->send = send;
 	utcp->priv = priv;
-	utcp_set_mtu(utcp, DEFAULT_MTU);
 	utcp->timeout = DEFAULT_USER_TIMEOUT; // sec
 
 	return utcp;
