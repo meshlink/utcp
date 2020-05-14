@@ -268,7 +268,7 @@ static ssize_t buffer_put_at(struct buffer *buf, size_t offset, const void *data
 
 	uint32_t realoffset = buf->offset + offset;
 
-	if(buf->size - buf->offset < offset) {
+	if(buf->size - buf->offset <= offset) {
 		// The offset wrapped
 		realoffset -= buf->size;
 	}
@@ -305,7 +305,7 @@ static ssize_t buffer_copy(struct buffer *buf, void *data, size_t offset, size_t
 
 	uint32_t realoffset = buf->offset + offset;
 
-	if(buf->size - buf->offset < offset) {
+	if(buf->size - buf->offset <= offset) {
 		// The offset wrapped
 		realoffset -= buf->size;
 	}
@@ -334,7 +334,7 @@ static ssize_t buffer_call(struct buffer *buf, utcp_recv_t cb, void *arg, size_t
 
 	uint32_t realoffset = buf->offset + offset;
 
-	if(buf->size - buf->offset < offset) {
+	if(buf->size - buf->offset <= offset) {
 		// The offset wrapped
 		realoffset -= buf->size;
 	}
@@ -365,7 +365,7 @@ static ssize_t buffer_discard(struct buffer *buf, size_t len) {
 		len = buf->used;
 	}
 
-	if(buf->size - buf->offset < len) {
+	if(buf->size - buf->offset <= len) {
 		buf->offset -= buf->size;
 	}
 
